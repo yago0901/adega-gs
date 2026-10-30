@@ -1,0 +1,175 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Module {
+  POS
+  STOCK
+  EMPLOYEES
+  PRODUCTS
+  FINANCE
+  HISTORY
+}
+
+enum ProductType {
+  STANDARD
+  SUPPLY
+  FRACTIONAL
+  COMPOSITE
+  COMBO
+}
+
+enum StockUnit {
+  UNIT
+  ML
+  GRAM
+}
+
+enum StockMovementType {
+  INITIAL
+  PURCHASE
+  SALE
+  LOSS
+  OPEN_CONTAINER
+  ADJUSTMENT
+  REVERSAL
+}
+
+model User {
+  id            String   @id @default(cuid())
+  name          String
+  email         String   @unique
+  emailVerified Boolean  @default(false)
+  image         String?
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  sessions       Session[]
+  accounts       Account[]
+  accesses       UserModuleAccess[]
+  stockMovements StockMovement[]
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?   @db.Text
+  refreshToken          String?   @db.Text
+  idToken               String?   @db.Text
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?   @db.Text
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String   @db.Text
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+}
+
+model UserModuleAccess {
+  id     String @id @default(cuid())
+  module Module
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, module])
+}
+
+model Category {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products Product[]
+}
+
+model Product {
+  id          String      @id @default(cuid())
+  code        String      @unique
+  barcode     String?     @unique
+  name        String
+  description String?
+  type        ProductType @default(STANDARD)
+  unit        StockUnit   @default(UNIT)
+
+  minStock     Decimal @default(0) @db.Decimal(12, 3)
+  salePrice    Decimal @db.Decimal(12, 2)
+  purchaseCost Decimal @db.Decimal(12, 2)
+
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id])
+
+  balance   StockBalance?
+  movements StockMovement[]
+
+  @@index([name])
+  @@index([categoryId])
+}
+
+model StockBalance {
+  id        String   @id @default(cuid())
+  quantity  Decimal  @default(0) @db.Decimal(12, 3)
+  updatedAt DateTime @updatedAt
+
+  productId String  @unique
+  product   Product @relation(fields: [productId], references: [id])
+}
+
+model StockMovement {
+  id        String            @id @default(cuid())
+  type      StockMovementType
+  quantity  Decimal           @db.Decimal(12, 3)
+  reason    String?
+  reference String?
+  createdAt DateTime          @default(now())
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id])
+
+  @@index([productId, createdAt])
+  @@index([createdAt])
+}
