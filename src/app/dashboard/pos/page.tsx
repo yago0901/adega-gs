@@ -1,7 +1,9 @@
 
 import { Suspense } from "react";
+
 import { prisma } from "@/lib/prisma";
 import { requireModuleAccess } from "@/lib/permissions";
+
 import PosClient from "./pos-client";
 
 export const metadata = {
@@ -31,16 +33,32 @@ async function PosContent() {
       type: {
         in: ["STANDARD", "SUPPLY"],
       },
+      stockItemId: {
+        not: null,
+      },
     },
     select: {
       id: true,
       code: true,
       name: true,
       salePrice: true,
-      unit: true,
-      balance: {
+      stockItem: {
         select: {
-          quantity: true,
+          unit: true,
+          balance: {
+            select: {
+              quantity: true,
+            },
+          },
+        },
+      },
+      stockPackaging: {
+        select: {
+          balance: {
+            select: {
+              quantity: true,
+            },
+          },
         },
       },
     },
@@ -49,14 +67,24 @@ async function PosContent() {
     },
   });
 
-  const formattedProducts = products.map((product) => ({
-    id: product.id,
-    code: product.code,
-    name: product.name,
-    salePrice: product.salePrice.toString(),
-    unit: product.unit,
-    stock: product.balance?.quantity.toString() ?? "0",
-  }));
+  const formattedProducts = products.map((product) => {
+    const stock = product.stockPackaging
+      ? product.stockPackaging.balance?.quantity.toString() ?? "0"
+      : product.stockItem?.balance?.quantity.toString() ?? "0";
+
+    const unit = product.stockPackaging
+      ? "UNIT"
+      : product.stockItem?.unit ?? "UNIT";
+
+    return {
+      id: product.id,
+      code: product.code,
+      name: product.name,
+      salePrice: product.salePrice.toString(),
+      unit,
+      stock,
+    };
+  });
 
   return <PosClient products={formattedProducts} />;
 }

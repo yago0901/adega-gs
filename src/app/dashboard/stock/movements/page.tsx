@@ -1,4 +1,3 @@
-
 import Link from "next/link";
 import { Suspense } from "react";
 
@@ -14,7 +13,7 @@ const movementLabels: Record<string, string> = {
   PURCHASE: "Entrada",
   SALE: "Venda",
   LOSS: "Perda",
-  OPEN_CONTAINER: "Abertura",
+  OPEN_PACKAGING: "Abertura de embalagem",
   ADJUSTMENT: "Ajuste",
   REVERSAL: "Estorno",
 };
@@ -24,6 +23,27 @@ function formatDate(date: Date) {
     dateStyle: "short",
     timeStyle: "short",
   });
+}
+
+function formatQuantity(value: number) {
+  return value.toLocaleString("pt-BR", {
+    maximumFractionDigits: 3,
+  });
+}
+
+function getMovementName(movement: {
+  stockItem: {
+    name: string;
+  };
+  stockPackaging: {
+    name: string;
+  } | null;
+}) {
+  if (movement.stockPackaging) {
+    return `${movement.stockItem.name} (${movement.stockPackaging.name})`;
+  }
+
+  return movement.stockItem.name;
 }
 
 export default function StockMovementsPage() {
@@ -45,11 +65,14 @@ async function MovementsContent() {
 
   const movements = await prisma.stockMovement.findMany({
     include: {
-      product: {
+      stockItem: {
         select: {
           name: true,
-          code: true,
-          unit: true,
+        },
+      },
+      stockPackaging: {
+        select: {
+          name: true,
         },
       },
       user: {
@@ -94,7 +117,7 @@ async function MovementsContent() {
                 <thead className="bg-slate-50 text-xs uppercase text-slate-500">
                   <tr>
                     <th className="px-5 py-4">Data</th>
-                    <th className="px-5 py-4">Produto</th>
+                    <th className="px-5 py-4">Item de estoque</th>
                     <th className="px-5 py-4">Tipo</th>
                     <th className="px-5 py-4">Quantidade</th>
                     <th className="px-5 py-4">Justificativa</th>
@@ -103,45 +126,46 @@ async function MovementsContent() {
                 </thead>
 
                 <tbody className="divide-y divide-slate-100">
-                  {movements.map((movement) => (
-                    <tr key={movement.id} className="hover:bg-slate-50">
-                      <td className="whitespace-nowrap px-5 py-4">
-                        {formatDate(movement.createdAt)}
-                      </td>
+                  {movements.map((movement) => {
+                    const quantity = movement.quantity.toNumber();
 
-                      <td className="px-5 py-4 font-medium">
-                        {movement.product.name}
-                        <p className="mt-1 text-xs text-slate-400">
-                          {movement.product.code}
-                        </p>
-                      </td>
+                    return (
+                      <tr key={movement.id} className="hover:bg-slate-50">
+                        <td className="whitespace-nowrap px-5 py-4">
+                          {formatDate(movement.createdAt)}
+                        </td>
 
-                      <td className="px-5 py-4">
-                        {movementLabels[movement.type] ?? movement.type}
-                      </td>
+                        <td className="px-5 py-4 font-medium">
+                          {getMovementName(movement)}
+                        </td>
 
-                      <td
-                        className={`px-5 py-4 font-semibold ${
-                          movement.quantity.toNumber() < 0
-                            ? "text-red-600"
-                            : "text-emerald-700"
-                        }`}
-                      >
-                        {movement.quantity.toNumber()}{" "}
-                        {movement.product.unit}
-                      </td>
+                        <td className="px-5 py-4">
+                          {movementLabels[movement.type] ??
+                            movement.type}
+                        </td>
 
-                      <td className="px-5 py-4">
-                        {movement.reason ?? "—"}
-                      </td>
+                        <td
+                          className={`whitespace-nowrap px-5 py-4 font-semibold ${
+                            quantity < 0
+                              ? "text-red-600"
+                              : "text-emerald-700"
+                          }`}
+                        >
+                          {formatQuantity(quantity)} {movement.unit}
+                        </td>
 
-                      <td className="px-5 py-4">
-                        {movement.user?.name ??
-                          movement.user?.username ??
-                          "Sistema"}
-                      </td>
-                    </tr>
-                  ))}
+                        <td className="px-5 py-4">
+                          {movement.reason ?? "—"}
+                        </td>
+
+                        <td className="px-5 py-4">
+                          {movement.user?.name ??
+                            movement.user?.username ??
+                            "Sistema"}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

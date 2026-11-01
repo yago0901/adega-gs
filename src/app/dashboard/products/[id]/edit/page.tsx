@@ -16,8 +16,26 @@ export default async function EditProductPage({
   const { id } = await params;
 
   const [product, categories] = await Promise.all([
-    prisma.product.findUnique({ where: { id } }),
-    prisma.category.findMany({ orderBy: { name: "asc" } }),
+    prisma.product.findUnique({
+      where: { id },
+      include: {
+        stockItem: {
+          select: {
+            unit: true,
+            minStock: true,
+            purchaseCost: true,
+          },
+        },
+        stockPackaging: {
+          select: {
+            conversionFactor: true,
+          },
+        },
+      },
+    }),
+    prisma.category.findMany({
+      orderBy: { name: "asc" },
+    }),
   ]);
 
   if (!product || !product.active) {
@@ -25,6 +43,17 @@ export default async function EditProductPage({
   }
 
   const action = updateProduct.bind(null, id);
+
+  const conversionFactor =
+    product.stockPackaging?.conversionFactor.toNumber() ?? 1;
+
+  const minStock = product.stockItem
+    ? product.stockItem.minStock.toNumber() / conversionFactor
+    : 0;
+
+  const purchaseCost = product.stockItem
+    ? product.stockItem.purchaseCost.toNumber() * conversionFactor
+    : 0;
 
   return (
     <main className="min-h-screen bg-slate-100 p-5 md:p-8">
@@ -115,7 +144,7 @@ export default async function EditProductPage({
             Unidade
             <select
               name="unit"
-              defaultValue={product.unit}
+              defaultValue={product.stockItem?.unit ?? "UNIT"}
               className="mt-2 w-full rounded-lg border bg-white p-3"
             >
               <option value="UNIT">Unidade</option>
@@ -131,7 +160,7 @@ export default async function EditProductPage({
               type="number"
               min="0"
               step="0.001"
-              defaultValue={product.minStock.toString()}
+              defaultValue={minStock}
               className="mt-2 w-full rounded-lg border p-3"
             />
           </label>
@@ -155,7 +184,7 @@ export default async function EditProductPage({
               type="number"
               min="0"
               step="0.01"
-              defaultValue={product.purchaseCost.toString()}
+              defaultValue={purchaseCost}
               className="mt-2 w-full rounded-lg border p-3"
             />
           </label>
@@ -167,6 +196,7 @@ export default async function EditProductPage({
             >
               Cancelar
             </Link>
+
             <button
               type="submit"
               className="rounded-lg bg-emerald-600 px-5 py-3 text-sm font-semibold text-white"

@@ -23,11 +23,25 @@ const currency = new Intl.NumberFormat("pt-BR", {
   currency: "BRL",
 });
 
-export default function PosClient({ products }: { products: Product[] }) {
+function getUnitLabel(unit: string) {
+  switch (unit) {
+    case "ML":
+      return "ml";
+    case "GRAM":
+      return "g";
+    default:
+      return "un.";
+  }
+}
+
+export default function PosClient({
+  products,
+}: {
+  products: Product[];
+}) {
   const [search, setSearch] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
   const [message, setMessage] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState<"CASH" | "PIX" | "CREDIT_CARD" | "DEBIT_CARD" | "">("");
   const [isPending, startTransition] = useTransition();
 
   const availableProducts = useMemo(() => {
@@ -41,7 +55,8 @@ export default function PosClient({ products }: { products: Product[] }) {
   }, [products, search]);
 
   const total = cart.reduce(
-    (sum, item) => sum + Number(item.product.salePrice) * item.quantity,
+    (sum, item) =>
+      sum + Number(item.product.salePrice) * item.quantity,
     0,
   );
 
@@ -62,12 +77,12 @@ export default function PosClient({ products }: { products: Product[] }) {
         return current.map((item) =>
           item.product.id === product.id
             ? {
-              ...item,
-              quantity: Math.min(
-                item.quantity + 1,
-                Number(product.stock),
-              ),
-            }
+                ...item,
+                quantity: Math.min(
+                  item.quantity + 1,
+                  Number(product.stock),
+                ),
+              }
             : item,
         );
       }
@@ -90,12 +105,14 @@ export default function PosClient({ products }: { products: Product[] }) {
 
     setCart((current) =>
       safeQuantity === 0
-        ? current.filter((cartItem) => cartItem.product.id !== productId)
+        ? current.filter(
+            (cartItem) => cartItem.product.id !== productId,
+          )
         : current.map((cartItem) =>
-          cartItem.product.id === productId
-            ? { ...cartItem, quantity: safeQuantity }
-            : cartItem,
-        ),
+            cartItem.product.id === productId
+              ? { ...cartItem, quantity: safeQuantity }
+              : cartItem,
+          ),
     );
   }
 
@@ -108,34 +125,35 @@ export default function PosClient({ products }: { products: Product[] }) {
   function handleFinalize() {
     if (cart.length === 0 || isPending) return;
 
-    if (!paymentMethod) {
-      setMessage("Selecione uma forma de pagamento.");
-      return;
-    }
-
     setMessage("");
 
     startTransition(async () => {
-      const result = await finalizeSale(
-        cart.map((item) => ({
-          productId: item.product.id,
-          quantity: item.quantity,
-        })),
-        paymentMethod,
-      );
+      try {
+        const result = await finalizeSale(
+          cart.map((item) => ({
+            productId: item.product.id,
+            quantity: item.quantity,
+          })),
+        );
 
-      if (!result.success) {
-        setMessage(result.error);
-        return;
+        if (!result.success) {
+          setMessage(result.error);
+          return;
+        }
+
+        setCart([]);
+        setSearch("");
+
+        setMessage(
+          `Venda ${result.saleId} registrada! Total: ${currency.format(
+            Number(result.total),
+          )}`,
+        );
+      } catch {
+        setMessage(
+          "Não foi possível finalizar a venda. Tente novamente.",
+        );
       }
-
-      setCart([]);
-      setSearch("");
-      setPaymentMethod("");
-
-      setMessage(
-        `Venda ${result.saleId} finalizada! Total: ${currency.format(Number(result.total))}`,
-      );
     });
   }
 
@@ -145,6 +163,7 @@ export default function PosClient({ products }: { products: Product[] }) {
         <h1 className="text-2xl font-bold text-gray-900">
           Frente de Caixa
         </h1>
+
         <p className="mt-1 text-sm text-gray-500">
           Selecione os produtos para iniciar uma venda.
         </p>
@@ -194,7 +213,7 @@ export default function PosClient({ products }: { products: Product[] }) {
                   </span>
 
                   <span className="mt-1 block text-xs text-gray-500">
-                    Estoque: {stock} {product.unit}
+                    Estoque: {stock} {getUnitLabel(product.unit)}
                   </span>
                 </button>
               );
@@ -207,40 +226,6 @@ export default function PosClient({ products }: { products: Product[] }) {
             )}
           </div>
         </section>
-        <div className="mt-5 space-y-3 border-t border-gray-200 pt-4">
-          <h3 className="font-semibold text-gray-900">
-            Forma de pagamento
-          </h3>
-
-          <div className="grid grid-cols-2 gap-2">
-            {[
-              { value: "CASH", label: "Dinheiro" },
-              { value: "PIX", label: "Pix" },
-              { value: "CREDIT_CARD", label: "Crédito" },
-              { value: "DEBIT_CARD", label: "Débito" },
-            ].map((method) => (
-              <button
-                key={method.value}
-                type="button"
-                onClick={() =>
-                  setPaymentMethod(
-                    method.value as
-                    | "CASH"
-                    | "PIX"
-                    | "CREDIT_CARD"
-                    | "DEBIT_CARD",
-                  )
-                }
-                className={`rounded-lg border px-3 py-3 text-sm font-medium transition ${paymentMethod === method.value
-                  ? "border-blue-600 bg-blue-50 text-blue-700"
-                  : "border-gray-200 text-gray-700 hover:border-gray-400"
-                  }`}
-              >
-                {method.label}
-              </button>
-            ))}
-          </div>
-        </div>
 
         <aside className="h-fit rounded-xl border border-gray-200 bg-white p-5">
           <h2 className="text-lg font-bold text-gray-900">
@@ -264,8 +249,11 @@ export default function PosClient({ products }: { products: Product[] }) {
                     <p className="font-medium text-gray-900">
                       {item.product.name}
                     </p>
+
                     <p className="text-sm text-gray-500">
-                      {currency.format(Number(item.product.salePrice))}
+                      {currency.format(
+                        Number(item.product.salePrice),
+                      )}
                     </p>
                   </div>
 
@@ -305,7 +293,9 @@ export default function PosClient({ products }: { products: Product[] }) {
                         item.quantity + 1,
                       )
                     }
-                    disabled={item.quantity >= Number(item.product.stock)}
+                    disabled={
+                      item.quantity >= Number(item.product.stock)
+                    }
                     className="h-8 w-8 rounded border border-gray-300 disabled:opacity-40"
                     aria-label="Aumentar quantidade"
                   >
@@ -314,7 +304,8 @@ export default function PosClient({ products }: { products: Product[] }) {
 
                   <span className="ml-auto font-semibold">
                     {currency.format(
-                      Number(item.product.salePrice) * item.quantity,
+                      Number(item.product.salePrice) *
+                        item.quantity,
                     )}
                   </span>
                 </div>
@@ -323,19 +314,27 @@ export default function PosClient({ products }: { products: Product[] }) {
           </div>
 
           <div className="mt-5 flex items-center justify-between border-t border-gray-200 pt-4">
-            <span className="font-medium text-gray-600">Total</span>
+            <span className="font-medium text-gray-600">
+              Total
+            </span>
+
             <span className="text-2xl font-bold text-gray-900">
               {currency.format(total)}
             </span>
           </div>
 
+          <p className="mt-3 text-xs text-gray-500">
+            O pagamento será realizado separadamente na maquininha
+            ou conforme o meio utilizado pela adega.
+          </p>
+
           <button
             type="button"
             onClick={handleFinalize}
-            disabled={cart.length === 0 || isPending || !paymentMethod}
+            disabled={cart.length === 0 || isPending}
             className="mt-5 w-full rounded-lg bg-blue-600 px-4 py-3 font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {isPending ? "Finalizando..." : "Finalizar venda"}
+            {isPending ? "Registrando venda..." : "Finalizar venda"}
           </button>
         </aside>
       </div>

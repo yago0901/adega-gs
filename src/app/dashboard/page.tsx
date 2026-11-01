@@ -7,6 +7,7 @@ import Link from "next/link";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import SignOutButton from "./sign-out-button";
+import { Sidebar } from "@/components/layout/sidebar";
 
 const menu = [
   { label: "Dashboard", href: "/dashboard", icon: "⌂", active: true },
@@ -40,51 +41,73 @@ async function DashboardContent() {
 
   const startOfDay = new Date(`${today}T00:00:00-03:00`);
 
-  const [activeProducts, salesToday, stockBalances] =
-    await Promise.all([
-      prisma.product.count({
-        where: { active: true },
-      }),
+  const [activeProducts, salesToday, stockItems] = await Promise.all([
+    prisma.product.count({
+      where: { active: true },
+    }),
 
-      prisma.stockMovement.count({
-        where: {
-          type: "SALE",
-          createdAt: { gte: startOfDay },
-        },
-      }),
+    prisma.stockMovement.count({
+      where: {
+        type: "SALE",
+        createdAt: { gte: startOfDay },
+      },
+    }),
 
-      prisma.stockBalance.findMany({
-        where: {
-          product: { active: true },
+    prisma.stockItem.findMany({
+      where: { active: true },
+      select: {
+        name: true,
+        unit: true,
+        minStock: true,
+        purchaseCost: true,
+        balance: {
+          select: {
+            quantity: true,
+          },
         },
-        select: {
-          quantity: true,
-          product: {
-            select: {
-              name: true,
-              minStock: true,
-              purchaseCost: true,
+        packagings: {
+          select: {
+            conversionFactor: true,
+            balance: {
+              select: {
+                quantity: true,
+              },
             },
           },
         },
-      }),
-    ]);
+      },
+    }),
+  ]);
 
-  const lowStockProducts = stockBalances
-    .filter(
-      (item) =>
-        item.quantity.toNumber() <= item.product.minStock.toNumber()
-    )
-    .sort(
-      (a, b) =>
-        a.quantity.toNumber() - b.quantity.toNumber()
+  const stockSummary = stockItems.map((item) => {
+    const looseQuantity = item.balance?.quantity.toNumber() ?? 0;
+
+    const packagedQuantity = item.packagings.reduce(
+      (total, packaging) => {
+        const quantity = packaging.balance?.quantity.toNumber() ?? 0;
+
+        return total + quantity * packaging.conversionFactor.toNumber();
+      },
+      0
     );
 
-  const inventoryCost = stockBalances.reduce(
-    (total, item) =>
-      total +
-      item.quantity.toNumber() *
-        item.product.purchaseCost.toNumber(),
+    const totalQuantity = looseQuantity + packagedQuantity;
+
+    return {
+      name: item.name,
+      unit: item.unit,
+      minStock: item.minStock.toNumber(),
+      quantity: totalQuantity,
+      purchaseCost: item.purchaseCost.toNumber(),
+    };
+  });
+
+  const lowStockProducts = stockSummary
+    .filter((item) => item.quantity <= item.minStock)
+    .sort((a, b) => a.quantity - b.quantity);
+
+  const inventoryCost = stockSummary.reduce(
+    (total, item) => total + item.quantity * item.purchaseCost,
     0
   );
 
@@ -104,7 +127,7 @@ async function DashboardContent() {
     {
       label: "Estoque baixo",
       value: lowStockProducts.length.toString(),
-      description: "Produtos no mínimo ou abaixo dele",
+      description: "Itens no mínimo ou abaixo dele",
       icon: "⚠",
     },
     {
@@ -117,45 +140,7 @@ async function DashboardContent() {
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900">
-      <aside className="fixed inset-y-0 left-0 z-20 hidden w-64 flex-col border-r border-slate-200 bg-white lg:flex">
-        <div className="border-b border-slate-200 px-6 py-6">
-          <h1 className="text-xl font-bold tracking-tight">
-            ADEGA <span className="text-emerald-600">GS</span>
-          </h1>
-          <p className="mt-1 text-xs text-slate-500">
-            Gestão e operação
-          </p>
-        </div>
-
-        <nav className="flex-1 space-y-1 p-4">
-          <p className="mb-3 px-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
-            Menu principal
-          </p>
-
-          {menu.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`flex items-center gap-3 rounded-lg px-3 py-3 text-sm font-medium transition ${
-                item.active
-                  ? "bg-emerald-50 text-emerald-700"
-                  : "text-slate-600 hover:bg-slate-100"
-              }`}
-            >
-              <span className="w-5 text-center text-lg">
-                {item.icon}
-              </span>
-              {item.label}
-            </Link>
-          ))}
-        </nav>
-
-        <div className="border-t border-slate-200 p-4">
-          <p className="text-xs text-slate-400">Sistema</p>
-          <p className="mt-1 text-sm font-medium">Adega GS</p>
-          <p className="text-xs text-slate-500">Versão inicial</p>
-        </div>
-      </aside>
+      <Sidebar menu={menu} />
 
       <div className="lg:pl-64">
         <header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4 md:px-8">
@@ -179,9 +164,7 @@ async function DashboardContent() {
 
         <main className="space-y-8 p-5 md:p-8">
           <section>
-            <h3 className="text-lg font-bold">
-              Visão geral
-            </h3>
+            <h3 className="text-lg font-bold">Visão geral</h3>
             <p className="mt-1 text-sm text-slate-500">
               Acompanhe os principais indicadores da sua adega.
             </p>
@@ -226,9 +209,7 @@ async function DashboardContent() {
                   className="rounded-lg border border-slate-200 p-4 transition hover:border-emerald-500 hover:bg-emerald-50"
                 >
                   <span className="text-2xl">▣</span>
-                  <p className="mt-3 text-sm font-semibold">
-                    Abrir caixa
-                  </p>
+                  <p className="mt-3 text-sm font-semibold">Abrir caixa</p>
                 </Link>
 
                 <Link
@@ -236,9 +217,7 @@ async function DashboardContent() {
                   className="rounded-lg border border-slate-200 p-4 transition hover:border-emerald-500 hover:bg-emerald-50"
                 >
                   <span className="text-2xl">▤</span>
-                  <p className="mt-3 text-sm font-semibold">
-                    Produtos
-                  </p>
+                  <p className="mt-3 text-sm font-semibold">Produtos</p>
                 </Link>
 
                 <Link
@@ -256,9 +235,7 @@ async function DashboardContent() {
                   className="rounded-lg border border-slate-200 p-4 transition hover:border-emerald-500 hover:bg-emerald-50"
                 >
                   <span className="text-2xl">◷</span>
-                  <p className="mt-3 text-sm font-semibold">
-                    Histórico
-                  </p>
+                  <p className="mt-3 text-sm font-semibold">Histórico</p>
                 </Link>
               </div>
             </div>
@@ -268,9 +245,10 @@ async function DashboardContent() {
                 <div>
                   <h3 className="font-bold">Atenção ao estoque</h3>
                   <p className="mt-1 text-sm text-slate-500">
-                    Produtos que atingiram o estoque mínimo.
+                    Itens que atingiram o estoque mínimo.
                   </p>
                 </div>
+
                 <Link
                   href="/dashboard/stock"
                   className="text-sm font-semibold text-emerald-700 hover:underline"
@@ -290,21 +268,22 @@ async function DashboardContent() {
                 </div>
               ) : (
                 <div className="mt-5 divide-y divide-slate-100">
-                  {lowStockProducts.slice(0, 5).map((item, index) => (
+                  {lowStockProducts.slice(0, 5).map((item) => (
                     <div
-                      key={`${item.product.name}-${index}`}
+                      key={item.name}
                       className="flex items-center justify-between gap-3 py-3"
                     >
                       <div>
                         <p className="text-sm font-semibold">
-                          {item.product.name}
+                          {item.name}
                         </p>
                         <p className="text-xs text-slate-500">
-                          Mínimo: {item.product.minStock.toString()}
+                          Mínimo: {item.minStock} {item.unit}
                         </p>
                       </div>
+
                       <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-semibold text-red-700">
-                        {item.quantity.toString()} em estoque
+                        {item.quantity} em estoque
                       </span>
                     </div>
                   ))}

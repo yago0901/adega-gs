@@ -17,6 +17,11 @@ enum Module {
   HISTORY
 }
 
+enum UserRole {
+  ADMIN
+  EMPLOYEE
+}
+
 enum ProductType {
   STANDARD
   SUPPLY
@@ -31,17 +36,12 @@ enum StockUnit {
   GRAM
 }
 
-enum UserRole {
-  ADMIN
-  EMPLOYEE
-}
-
 enum StockMovementType {
   INITIAL
   PURCHASE
   SALE
   LOSS
-  OPEN_CONTAINER
+  OPEN_PACKAGING
   ADJUSTMENT
   REVERSAL
 }
@@ -68,7 +68,7 @@ model User {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  username        String?   @unique
+  username        String?  @unique
   displayUsername String?
   role            UserRole @default(EMPLOYEE)
 
@@ -150,25 +150,49 @@ model Product {
   name        String
   description String?
   type        ProductType @default(STANDARD)
-  unit        StockUnit   @default(UNIT)
 
-  minStock     Decimal @default(0) @db.Decimal(12, 3)
-  salePrice    Decimal @db.Decimal(12, 2)
-  purchaseCost Decimal @db.Decimal(12, 2)
+  salePrice Decimal @db.Decimal(12, 2)
+  active    Boolean @default(true)
 
-  active    Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   categoryId String
   category   Category @relation(fields: [categoryId], references: [id])
 
-  balance   StockBalance?
-  movements StockMovement[]
-  saleItems SaleItem[]
+  stockItemId      String?
+  stockItem        StockItem?     @relation(fields: [stockItemId], references: [id])
+  stockPackagingId String?
+  stockPackaging   StockPackaging? @relation(fields: [stockPackagingId], references: [id])
+
+  recipeItems      ProductRecipeItem[] @relation("RecipeProduct")
+  comboItems       ComboItem[]         @relation("ComboProduct")
+  includedInCombos ComboItem[]         @relation("ComponentProduct")
+  saleItems        SaleItem[]
 
   @@index([name])
   @@index([categoryId])
+  @@index([stockItemId])
+  @@index([stockPackagingId])
+}
+
+model StockItem {
+  id           String    @id @default(cuid())
+  name         String
+  unit         StockUnit
+  minStock     Decimal   @default(0) @db.Decimal(12, 3)
+  purchaseCost Decimal   @default(0) @db.Decimal(12, 2)
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  balance    StockBalance?
+  packagings StockPackaging[]
+  products   Product[]
+  recipeUses ProductRecipeItem[]
+  movements  StockMovement[]
+
+  @@index([name])
 }
 
 model StockBalance {
@@ -176,20 +200,76 @@ model StockBalance {
   quantity  Decimal  @default(0) @db.Decimal(12, 3)
   updatedAt DateTime @updatedAt
 
-  productId String  @unique
-  product   Product @relation(fields: [productId], references: [id])
+  stockItemId String    @unique
+  stockItem   StockItem @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
+}
+
+model StockPackaging {
+  id               String   @id @default(cuid())
+  name             String
+  conversionFactor Decimal  @db.Decimal(12, 3)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  stockItemId String
+  stockItem   StockItem @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
+
+  balance   StockPackagingBalance?
+  products  Product[]
+  movements StockMovement[]
+
+  @@unique([stockItemId, name])
+}
+
+model StockPackagingBalance {
+  id        String   @id @default(cuid())
+  quantity  Decimal  @default(0) @db.Decimal(12, 3)
+  updatedAt DateTime @updatedAt
+
+  stockPackagingId String         @unique
+  stockPackaging   StockPackaging @relation(fields: [stockPackagingId], references: [id], onDelete: Cascade)
+}
+
+model ProductRecipeItem {
+  id       String  @id @default(cuid())
+  quantity Decimal @db.Decimal(12, 3)
+
+  productId String
+  product   Product @relation("RecipeProduct", fields: [productId], references: [id], onDelete: Cascade)
+
+  stockItemId String
+  stockItem   StockItem @relation(fields: [stockItemId], references: [id])
+
+  @@unique([productId, stockItemId])
+}
+
+model ComboItem {
+  id       String  @id @default(cuid())
+  quantity Decimal @db.Decimal(12, 3)
+
+  comboProductId String
+  comboProduct   Product @relation("ComboProduct", fields: [comboProductId], references: [id], onDelete: Cascade)
+
+  componentProductId String
+  componentProduct   Product @relation("ComponentProduct", fields: [componentProductId], references: [id])
+
+  @@unique([comboProductId, componentProductId])
 }
 
 model StockMovement {
   id        String            @id @default(cuid())
   type      StockMovementType
   quantity  Decimal           @db.Decimal(12, 3)
+  unit      StockUnit
   reason    String?
   reference String?
   createdAt DateTime          @default(now())
 
-  productId String
-  product   Product @relation(fields: [productId], references: [id])
+  stockItemId String
+  stockItem   StockItem @relation(fields: [stockItemId], references: [id])
+
+  stockPackagingId String?
+  stockPackaging   StockPackaging? @relation(fields: [stockPackagingId], references: [id])
 
   userId String?
   user   User?   @relation(fields: [userId], references: [id])
@@ -197,19 +277,20 @@ model StockMovement {
   saleId String?
   sale   Sale?   @relation(fields: [saleId], references: [id], onDelete: SetNull)
 
-  @@index([productId, createdAt])
+  @@index([stockItemId, createdAt])
+  @@index([stockPackagingId, createdAt])
   @@index([createdAt])
   @@index([saleId])
 }
 
 model Sale {
-  id          String     @id @default(cuid())
-  status      SaleStatus @default(COMPLETED)
+  id            String         @id @default(cuid())
+  status        SaleStatus     @default(COMPLETED)
   paymentMethod PaymentMethod?
-  total       Decimal    @db.Decimal(12, 2)
-  notes       String?
-  createdAt   DateTime   @default(now())
-  cancelledAt DateTime?
+  total         Decimal        @db.Decimal(12, 2)
+  notes         String?
+  createdAt     DateTime       @default(now())
+  cancelledAt   DateTime?
 
   userId String
   user   User   @relation(fields: [userId], references: [id])
@@ -224,13 +305,13 @@ model Sale {
 }
 
 model SaleItem {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   productName String
   productCode String
   unit        StockUnit
-  quantity    Decimal  @db.Decimal(12, 3)
-  unitPrice   Decimal  @db.Decimal(12, 2)
-  total       Decimal  @db.Decimal(12, 2)
+  quantity    Decimal   @db.Decimal(12, 3)
+  unitPrice   Decimal   @db.Decimal(12, 2)
+  total       Decimal   @db.Decimal(12, 2)
 
   saleId String
   sale   Sale   @relation(fields: [saleId], references: [id], onDelete: Restrict)

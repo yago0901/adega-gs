@@ -33,7 +33,11 @@ async function ProductsContent() {
     where: { active: true },
     include: {
       category: true,
-      balance: true,
+      stockItem: {
+        include: {
+          balance: true,
+        },
+      },
     },
     orderBy: { name: "asc" },
   });
@@ -50,7 +54,9 @@ async function ProductsContent() {
               ← Dashboard
             </Link>
 
-            <h1 className="mt-3 text-2xl font-bold">Produtos</h1>
+            <h1 className="mt-3 text-2xl font-bold">
+              Produtos
+            </h1>
 
             <p className="mt-1 text-sm text-slate-500">
               Cadastro e consulta do catálogo da adega.
@@ -93,10 +99,17 @@ async function ProductsContent() {
                 <tbody className="divide-y divide-slate-100">
                   {products.map((product) => {
                     const quantity =
-                      product.balance?.quantity.toNumber() ?? 0;
+                      product.stockItem?.balance?.quantity.toNumber() ?? 0;
+
+                    const minStock =
+                      product.stockItem?.minStock.toNumber() ?? 0;
+
+                    const unit =
+                      product.stockItem?.unit ?? "UNIT";
 
                     const isLow =
-                      quantity <= product.minStock.toNumber();
+                      product.stockItem !== null &&
+                      quantity <= minStock;
 
                     return (
                       <tr
@@ -120,15 +133,21 @@ async function ProductsContent() {
                         </td>
 
                         <td className="px-5 py-4">
-                          <span
-                            className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                              isLow
-                                ? "bg-red-50 text-red-700"
-                                : "bg-emerald-50 text-emerald-700"
-                            }`}
-                          >
-                            {quantity} {product.unit}
-                          </span>
+                          {product.stockItem ? (
+                            <span
+                              className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                                isLow
+                                  ? "bg-red-50 text-red-700"
+                                  : "bg-emerald-50 text-emerald-700"
+                              }`}
+                            >
+                              {quantity} {unit}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-slate-400">
+                              Não vinculado
+                            </span>
+                          )}
                         </td>
 
                         <td className="px-5 py-4">
