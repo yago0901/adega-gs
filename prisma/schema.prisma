@@ -51,6 +51,13 @@ enum SaleStatus {
   CANCELLED
 }
 
+enum PaymentMethod {
+  CASH
+  PIX
+  CREDIT_CARD
+  DEBIT_CARD
+}
+
 model User {
   id            String   @id @default(cuid())
   name          String
@@ -198,6 +205,7 @@ model StockMovement {
 model Sale {
   id          String     @id @default(cuid())
   status      SaleStatus @default(COMPLETED)
+  paymentMethod PaymentMethod?
   total       Decimal    @db.Decimal(12, 2)
   notes       String?
   createdAt   DateTime   @default(now())
@@ -212,6 +220,7 @@ model Sale {
   @@index([createdAt])
   @@index([userId, createdAt])
   @@index([status])
+  @@index([paymentMethod])
 }
 
 model SaleItem {

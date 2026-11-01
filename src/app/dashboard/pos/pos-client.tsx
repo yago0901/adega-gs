@@ -27,6 +27,7 @@ export default function PosClient({ products }: { products: Product[] }) {
   const [search, setSearch] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
   const [message, setMessage] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<"CASH" | "PIX" | "CREDIT_CARD" | "DEBIT_CARD" | "">("");
   const [isPending, startTransition] = useTransition();
 
   const availableProducts = useMemo(() => {
@@ -61,12 +62,12 @@ export default function PosClient({ products }: { products: Product[] }) {
         return current.map((item) =>
           item.product.id === product.id
             ? {
-                ...item,
-                quantity: Math.min(
-                  item.quantity + 1,
-                  Number(product.stock),
-                ),
-              }
+              ...item,
+              quantity: Math.min(
+                item.quantity + 1,
+                Number(product.stock),
+              ),
+            }
             : item,
         );
       }
@@ -91,10 +92,10 @@ export default function PosClient({ products }: { products: Product[] }) {
       safeQuantity === 0
         ? current.filter((cartItem) => cartItem.product.id !== productId)
         : current.map((cartItem) =>
-            cartItem.product.id === productId
-              ? { ...cartItem, quantity: safeQuantity }
-              : cartItem,
-          ),
+          cartItem.product.id === productId
+            ? { ...cartItem, quantity: safeQuantity }
+            : cartItem,
+        ),
     );
   }
 
@@ -107,6 +108,11 @@ export default function PosClient({ products }: { products: Product[] }) {
   function handleFinalize() {
     if (cart.length === 0 || isPending) return;
 
+    if (!paymentMethod) {
+      setMessage("Selecione uma forma de pagamento.");
+      return;
+    }
+
     setMessage("");
 
     startTransition(async () => {
@@ -115,6 +121,7 @@ export default function PosClient({ products }: { products: Product[] }) {
           productId: item.product.id,
           quantity: item.quantity,
         })),
+        paymentMethod,
       );
 
       if (!result.success) {
@@ -124,6 +131,8 @@ export default function PosClient({ products }: { products: Product[] }) {
 
       setCart([]);
       setSearch("");
+      setPaymentMethod("");
+
       setMessage(
         `Venda ${result.saleId} finalizada! Total: ${currency.format(Number(result.total))}`,
       );
@@ -198,6 +207,40 @@ export default function PosClient({ products }: { products: Product[] }) {
             )}
           </div>
         </section>
+        <div className="mt-5 space-y-3 border-t border-gray-200 pt-4">
+          <h3 className="font-semibold text-gray-900">
+            Forma de pagamento
+          </h3>
+
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              { value: "CASH", label: "Dinheiro" },
+              { value: "PIX", label: "Pix" },
+              { value: "CREDIT_CARD", label: "Crédito" },
+              { value: "DEBIT_CARD", label: "Débito" },
+            ].map((method) => (
+              <button
+                key={method.value}
+                type="button"
+                onClick={() =>
+                  setPaymentMethod(
+                    method.value as
+                    | "CASH"
+                    | "PIX"
+                    | "CREDIT_CARD"
+                    | "DEBIT_CARD",
+                  )
+                }
+                className={`rounded-lg border px-3 py-3 text-sm font-medium transition ${paymentMethod === method.value
+                  ? "border-blue-600 bg-blue-50 text-blue-700"
+                  : "border-gray-200 text-gray-700 hover:border-gray-400"
+                  }`}
+              >
+                {method.label}
+              </button>
+            ))}
+          </div>
+        </div>
 
         <aside className="h-fit rounded-xl border border-gray-200 bg-white p-5">
           <h2 className="text-lg font-bold text-gray-900">
@@ -289,7 +332,7 @@ export default function PosClient({ products }: { products: Product[] }) {
           <button
             type="button"
             onClick={handleFinalize}
-            disabled={cart.length === 0 || isPending}
+            disabled={cart.length === 0 || isPending || !paymentMethod}
             className="mt-5 w-full rounded-lg bg-blue-600 px-4 py-3 font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isPending ? "Finalizando..." : "Finalizar venda"}

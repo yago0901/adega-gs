@@ -6,6 +6,12 @@ import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireModuleAccess } from "@/lib/permissions";
 
+type PaymentMethod =
+  | "CASH"
+  | "PIX"
+  | "CREDIT_CARD"
+  | "DEBIT_CARD";
+
 type SaleRequestItem = {
   productId: string;
   quantity: number;
@@ -15,11 +21,23 @@ type SaleResult =
   | { success: true; saleId: string; total: string }
   | { success: false; error: string };
 
+const allowedPaymentMethods: PaymentMethod[] = [
+  "CASH",
+  "PIX",
+  "CREDIT_CARD",
+  "DEBIT_CARD",
+];
+
 export async function finalizeSale(
   items: SaleRequestItem[],
+  paymentMethod: PaymentMethod,
 ): Promise<SaleResult> {
   try {
     const session = await requireModuleAccess("POS");
+
+    if (!allowedPaymentMethods.includes(paymentMethod)) {
+      return { success: false, error: "Forma de pagamento inválida." };
+    }
 
     if (!Array.isArray(items) || items.length === 0) {
       return { success: false, error: "Adicione produtos à venda." };
@@ -40,7 +58,10 @@ export async function finalizeSale(
         item.quantity <= 0 ||
         !/^\d+(\.\d{1,3})?$/.test(String(item.quantity))
       ) {
-        return { success: false, error: "Um dos itens possui quantidade inválida." };
+        return {
+          success: false,
+          error: "Um dos itens possui quantidade inválida.",
+        };
       }
 
       const quantity = new Prisma.Decimal(String(item.quantity));
@@ -88,7 +109,9 @@ export async function finalizeSale(
 
       for (const item of saleItems) {
         if (!item.product.balance) {
-          throw new Error(`O produto ${item.product.name} não possui saldo de estoque.`);
+          throw new Error(
+            `O produto ${item.product.name} não possui saldo de estoque.`,
+          );
         }
 
         const updated = await tx.stockBalance.updateMany({
@@ -109,6 +132,7 @@ export async function finalizeSale(
       const sale = await tx.sale.create({
         data: {
           total,
+          paymentMethod,
           userId: session.user.id,
           items: {
             create: saleItems.map((item) => ({
