@@ -8,6 +8,7 @@ type Product = {
   id: string;
   code: string;
   name: string;
+  type: "STANDARD" | "SUPPLY" | "FRACTIONAL" | "COMBO";
   salePrice: string;
   unit: string;
   stock: string;
@@ -23,14 +24,16 @@ const currency = new Intl.NumberFormat("pt-BR", {
   currency: "BRL",
 });
 
-function getUnitLabel(unit: string) {
-  switch (unit) {
-    case "ML":
-      return "ml";
-    case "GRAM":
-      return "g";
+function getTypeLabel(type: Product["type"]) {
+  switch (type) {
+    case "FRACTIONAL":
+      return "Dose";
+    case "COMBO":
+      return "Combo";
+    case "SUPPLY":
+      return "Insumo";
     default:
-      return "un.";
+      return "Produto";
   }
 }
 
@@ -62,7 +65,7 @@ export default function PosClient({
 
   function addProduct(product: Product) {
     if (Number(product.stock) <= 0) {
-      setMessage("Este produto está sem estoque.");
+      setMessage("Este produto está sem estoque suficiente.");
       return;
     }
 
@@ -200,9 +203,15 @@ export default function PosClient({
                   onClick={() => addProduct(product)}
                   className="rounded-xl border border-gray-200 bg-white p-4 text-left transition hover:border-blue-400 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <span className="block font-semibold text-gray-900">
-                    {product.name}
-                  </span>
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="font-semibold text-gray-900">
+                      {product.name}
+                    </span>
+
+                    <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">
+                      {getTypeLabel(product.type)}
+                    </span>
+                  </div>
 
                   <span className="mt-1 block text-xs text-gray-500">
                     Código: {product.code}
@@ -213,7 +222,7 @@ export default function PosClient({
                   </span>
 
                   <span className="mt-1 block text-xs text-gray-500">
-                    Estoque: {stock} {getUnitLabel(product.unit)}
+                    Disponível: {stock} un.
                   </span>
                 </button>
               );
@@ -248,6 +257,10 @@ export default function PosClient({
                   <div>
                     <p className="font-medium text-gray-900">
                       {item.product.name}
+                    </p>
+
+                    <p className="text-xs text-gray-500">
+                      {getTypeLabel(item.product.type)}
                     </p>
 
                     <p className="text-sm text-gray-500">

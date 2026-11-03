@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import { prisma } from "@/lib/prisma";
 import { requireModuleAccess } from "@/lib/permissions";
 import { createCategory, createProduct } from "../actions";
+import { ProductTypeFields } from "./product-type-fields";
 
 export default async function NewProductPage() {
   return (
@@ -22,15 +23,13 @@ export default async function NewProductPage() {
 async function NewProductContent() {
   await requireModuleAccess("PRODUCTS");
 
-  const [categories, stockItems] = await Promise.all([
+  const [categories, stockItems, products] = await Promise.all([
     prisma.category.findMany({
       orderBy: { name: "asc" },
     }),
+
     prisma.stockItem.findMany({
-      where: {
-        active: true,
-        unit: "ML",
-      },
+      where: { active: true },
       orderBy: { name: "asc" },
       select: {
         id: true,
@@ -38,7 +37,44 @@ async function NewProductContent() {
         unit: true,
       },
     }),
+
+    prisma.product.findMany({
+      where: {
+        active: true,
+        type: { in: ["STANDARD", "SUPPLY"] },
+        stockItemId: { not: null },
+      },
+      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        name: true,
+        stockItem: {
+          select: {
+            unit: true,
+          },
+        },
+        stockPackagingId: true,
+        packagingChildProductId: true,
+      },
+    }),
   ]);
+
+  const comboProducts = products.map((product) => ({
+    id: product.id,
+    name: product.name,
+  }));
+
+  const packagingChildProducts = products
+    .filter(
+      (product) =>
+        product.stockItem?.unit === "UNIT" &&
+        product.stockPackagingId === null &&
+        product.packagingChildProductId === null,
+    )
+    .map((product) => ({
+      id: product.id,
+      name: product.name,
+    }));
 
   return (
     <main className="min-h-screen bg-slate-100 p-5 md:p-8">
@@ -53,7 +89,7 @@ async function NewProductContent() {
         <h1 className="mt-4 text-2xl font-bold">Novo produto</h1>
 
         <p className="mt-1 text-sm text-slate-500">
-          Cadastre produtos, insumos, garrafas e doses.
+          Cadastre produtos comuns, doses e combos.
         </p>
 
         <form
@@ -89,7 +125,7 @@ async function NewProductContent() {
                   name="name"
                   required
                   className="mt-2 w-full rounded-lg border border-slate-300 p-3"
-                  placeholder="Ex.: Whisky 1L ou Dose de Whisky"
+                  placeholder="Ex.: Whisky 1L, Skol Lata ou Skol Fardo"
                 />
               </label>
 
@@ -124,131 +160,14 @@ async function NewProductContent() {
             </div>
           </section>
 
-          <section className="border-t border-slate-100 pt-6">
-            <h2 className="mb-4 font-bold">Classificação</h2>
-
-            <label className="block text-sm font-medium">
-              Tipo de produto
-              <select
-                name="type"
-                defaultValue="STANDARD"
-                className="mt-2 w-full rounded-lg border border-slate-300 bg-white p-3"
-              >
-                <option value="STANDARD">Produto comum</option>
-                <option value="SUPPLY">Descartável / insumo</option>
-                <option value="FRACTIONAL">Dose / produto fracionado</option>
-                <option value="COMPOSITE">Composição</option>
-                <option value="COMBO">Combo</option>
-              </select>
-            </label>
-
-            <p className="mt-2 text-xs text-slate-500">
-              Produtos comuns e descartáveis possuem estoque próprio.
-              Doses consomem ingredientes cadastrados anteriormente.
-              Composições e combos serão configurados em uma próxima etapa.
-            </p>
-          </section>
+          <ProductTypeFields
+            stockItems={stockItems}
+            products={comboProducts}
+            packagingChildProducts={packagingChildProducts}
+          />
 
           <section className="border-t border-slate-100 pt-6">
-            <h2 className="mb-2 font-bold">Configuração de estoque</h2>
-
-            <p className="mb-4 text-sm text-slate-500">
-              Para produtos comuns, informe a unidade e o estoque inicial.
-              Para garrafas, utilize ml como unidade e informe a capacidade
-              da embalagem.
-            </p>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className="text-sm font-medium">
-                Unidade do estoque
-                <select
-                  name="unit"
-                  defaultValue="UNIT"
-                  className="mt-2 w-full rounded-lg border border-slate-300 bg-white p-3"
-                >
-                  <option value="UNIT">Unidade</option>
-                  <option value="ML">Mililitros (ml)</option>
-                  <option value="GRAM">Gramas (g)</option>
-                </select>
-              </label>
-
-              <label className="text-sm font-medium">
-                Capacidade da embalagem (ml)
-                <input
-                  name="bottleCapacityMl"
-                  type="number"
-                  min="0"
-                  step="0.001"
-                  className="mt-2 w-full rounded-lg border border-slate-300 p-3"
-                  placeholder="Ex.: 1000"
-                />
-              </label>
-            </div>
-
-            <p className="mt-3 text-xs text-slate-500">
-              Deixe a capacidade vazia para produtos sem embalagem
-              fracionável. Exemplo: uma garrafa de 1 litro terá unidade
-              ML e capacidade de 1000 ml.
-            </p>
-          </section>
-
-          <section className="border-t border-slate-100 pt-6">
-            <h2 className="mb-2 font-bold">Composição da dose</h2>
-
-            <p className="mb-4 text-sm text-slate-500">
-              Utilize esta configuração somente ao cadastrar uma dose.
-              Selecione o ingrediente e informe quanto dele será consumido
-              em cada venda.
-            </p>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className="text-sm font-medium sm:col-span-2">
-                Ingrediente do estoque
-                <select
-                  name="ingredientStockItemId"
-                  defaultValue=""
-                  className="mt-2 w-full rounded-lg border border-slate-300 bg-white p-3"
-                >
-                  <option value="">
-                    Selecione um ingrediente
-                  </option>
-
-                  {stockItems.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="text-sm font-medium">
-                Consumo por dose (ml)
-                <input
-                  name="recipeQuantityMl"
-                  type="number"
-                  min="0"
-                  step="0.001"
-                  className="mt-2 w-full rounded-lg border border-slate-300 p-3"
-                  placeholder="Ex.: 50"
-                />
-              </label>
-            </div>
-
-            {stockItems.length === 0 && (
-              <p className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
-                Nenhum ingrediente em ml cadastrado. Cadastre primeiro
-                a garrafa ou o ingrediente que será utilizado na dose.
-              </p>
-            )}
-
-            <p className="mt-3 text-xs text-slate-500">
-              Exemplo: Dose de Whisky → Whisky → 50 ml. A venda de
-              três doses consumirá 150 ml do estoque de Whisky.
-            </p>
-          </section>
-
-          <section className="border-t border-slate-100 pt-6">
-            <h2 className="mb-4 font-bold">Valores e estoque inicial</h2>
+            <h2 className="mb-4 font-bold">Valores</h2>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="text-sm font-medium">
@@ -274,37 +193,14 @@ async function NewProductContent() {
                   className="mt-2 w-full rounded-lg border border-slate-300 p-3"
                 />
               </label>
-
-              <label className="text-sm font-medium">
-                Estoque mínimo
-                <input
-                  name="minStock"
-                  type="number"
-                  min="0"
-                  step="0.001"
-                  defaultValue="0"
-                  className="mt-2 w-full rounded-lg border border-slate-300 p-3"
-                />
-              </label>
-
-              <label className="text-sm font-medium">
-                Quantidade inicial
-                <input
-                  name="initialStock"
-                  type="number"
-                  min="0"
-                  step="0.001"
-                  defaultValue="0"
-                  className="mt-2 w-full rounded-lg border border-slate-300 p-3"
-                />
-              </label>
             </div>
 
             <p className="mt-3 text-xs text-slate-500">
-              Para uma garrafa com embalagem configurada, a quantidade
-              inicial representa o número de garrafas fechadas. Para
-              produtos comuns, representa a quantidade na unidade escolhida.
-              Doses não recebem estoque inicial próprio.
+              Para produtos com embalagem própria, informe o custo de uma
+              embalagem fechada. Para embalagens comerciais, informe o
+              custo da embalagem (por exemplo, o preço de compra de um
+              fardo). Para produtos sem embalagem, informe o custo na
+              unidade de controle.
             </p>
           </section>
 

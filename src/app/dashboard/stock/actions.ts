@@ -1,6 +1,7 @@
 
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { Prisma } from "@/generated/prisma/client";
 
@@ -182,9 +183,7 @@ export async function registerStockLoss(formData: FormData) {
       });
 
       if (result.count !== 1) {
-        throw new Error(
-          `Estoque insuficiente de ${product.name}.`,
-        );
+        throw new Error(`Estoque insuficiente de ${product.name}.`);
       }
 
       await tx.stockMovement.create({
@@ -333,6 +332,317 @@ export async function registerStockAdjustment(formData: FormData) {
         },
       });
     }
+  });
+
+  revalidateStockPages();
+}
+
+export async function openCommercialPackaging(formData: FormData) {
+  const session = await requireModuleAccess("STOCK");
+  const productId = getText(formData, "productId");
+
+  if (!productId) {
+    throw new Error("Produto não informado.");
+  }
+
+  const reference = randomUUID();
+
+  await prisma.$transaction(async (tx) => {
+    const parentProduct = await tx.product.findFirst({
+      where: {
+        id: productId,
+        active: true,
+      },
+      include: {
+        stockItem: {
+          include: {
+            balance: true,
+          },
+        },
+        packagingChildProduct: {
+          include: {
+            stockItem: {
+              include: {
+                balance: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!parentProduct) {
+      throw new Error("Produto não encontrado ou inativo.");
+    }
+
+    if (
+      parentProduct.type !== "STANDARD" &&
+      parentProduct.type !== "SUPPLY"
+    ) {
+      throw new Error("Somente produtos comuns podem ser abertos.");
+    }
+
+    const parentStockItem = parentProduct.stockItem;
+    const childProduct = parentProduct.packagingChildProduct;
+    const conversionFactor = parentProduct.packagingChildQuantity;
+
+    if (!parentStockItem || !parentStockItem.balance) {
+      throw new Error("Saldo da embalagem não encontrado.");
+    }
+
+    if (parentStockItem.unit !== "UNIT") {
+      throw new Error(
+        "A embalagem comercial precisa controlar seu estoque em unidades.",
+      );
+    }
+
+    if (!childProduct || !conversionFactor) {
+      throw new Error(
+        "Este produto não possui uma conversão de embalagem configurada.",
+      );
+    }
+
+    if (!childProduct.active || !childProduct.stockItem) {
+      throw new Error("O produto convertido está inativo ou sem estoque.");
+    }
+
+    if (
+      childProduct.type !== "STANDARD" &&
+      childProduct.type !== "SUPPLY"
+    ) {
+      throw new Error("O produto convertido não é um produto comum.");
+    }
+
+    if (
+      childProduct.stockItem.unit !== "UNIT" ||
+      !childProduct.stockItem.active
+    ) {
+      throw new Error(
+        "O produto convertido precisa ter estoque próprio em unidades.",
+      );
+    }
+
+    if (!childProduct.stockItem.balance) {
+      throw new Error("Saldo do produto convertido não encontrado.");
+    }
+
+    if (
+      childProduct.stockPackagingId !== null ||
+      childProduct.packagingChildProductId !== null
+    ) {
+      throw new Error(
+        "O produto convertido não pode possuir outra conversão de embalagem.",
+      );
+    }
+
+    if (conversionFactor.lessThanOrEqualTo(0)) {
+      throw new Error("Fator de conversão inválido.");
+    }
+
+    const parentUpdate = await tx.stockBalance.updateMany({
+      where: {
+        stockItemId: parentStockItem.id,
+        quantity: {
+          gte: new Prisma.Decimal(1),
+        },
+      },
+      data: {
+        quantity: {
+          decrement: new Prisma.Decimal(1),
+        },
+      },
+    });
+
+    if (parentUpdate.count !== 1) {
+      throw new Error(
+        `Estoque insuficiente de ${parentProduct.name}.`,
+      );
+    }
+
+    const childUpdate = await tx.stockBalance.updateMany({
+      where: {
+        stockItemId: childProduct.stockItem.id,
+      },
+      data: {
+        quantity: {
+          increment: conversionFactor,
+        },
+      },
+    });
+
+    if (childUpdate.count !== 1) {
+      throw new Error(
+        `Não foi possível atualizar o estoque de ${childProduct.name}.`,
+      );
+    }
+
+    await tx.stockMovement.create({
+      data: {
+        type: "OPEN_PACKAGING",
+        quantity: new Prisma.Decimal(-1),
+        unit: "UNIT",
+        reason: `Abertura de ${parentProduct.name}: conversão para ${conversionFactor.toString()} ${childProduct.name}.`,
+        reference,
+        stockItemId: parentStockItem.id,
+        userId: session.user.id,
+      },
+    });
+
+    await tx.stockMovement.create({
+      data: {
+        type: "OPEN_PACKAGING",
+        quantity: conversionFactor,
+        unit: "UNIT",
+        reason: `Recebimento por abertura de ${parentProduct.name}.`,
+        reference,
+        stockItemId: childProduct.stockItem.id,
+        userId: session.user.id,
+      },
+    });
+  });
+
+  revalidateStockPages();
+}
+
+export async function openStockBottle(formData: FormData) {
+  const session = await requireModuleAccess("STOCK");
+
+  const productId = getText(formData, "productId");
+  const rawQuantity = getText(formData, "quantity");
+  const quantityNumber = Number(rawQuantity);
+
+  if (!productId) {
+    throw new Error("Produto não informado.");
+  }
+
+  if (
+    !Number.isSafeInteger(quantityNumber) ||
+    quantityNumber <= 0 ||
+    quantityNumber > 10000
+  ) {
+    throw new Error("Informe uma quantidade válida de garrafas.");
+  }
+
+  const quantity = new Prisma.Decimal(quantityNumber);
+  const reference = randomUUID();
+
+  await prisma.$transaction(async (tx) => {
+    const product = await tx.product.findFirst({
+      where: {
+        id: productId,
+        active: true,
+      },
+      include: {
+        stockItem: {
+          include: {
+            balance: true,
+          },
+        },
+        stockPackaging: {
+          include: {
+            balance: true,
+          },
+        },
+      },
+    });
+
+    if (!product) {
+      throw new Error("Produto não encontrado ou inativo.");
+    }
+
+    if (product.type !== "STANDARD" && product.type !== "SUPPLY") {
+      throw new Error("Somente produtos comuns podem ter garrafas abertas.");
+    }
+
+    const stockItem = product.stockItem;
+    const packaging = product.stockPackaging;
+
+    if (!stockItem || !packaging) {
+      throw new Error("Este produto não possui embalagem própria configurada.");
+    }
+
+    if (stockItem.unit !== "ML") {
+      throw new Error(
+        "A abertura de garrafas exige que o estoque do produto seja controlado em ml.",
+      );
+    }
+
+    if (!stockItem.active || !stockItem.balance) {
+      throw new Error("Saldo do estoque aberto não encontrado.");
+    }
+
+    if (!packaging.balance) {
+      throw new Error("Saldo das garrafas fechadas não encontrado.");
+    }
+
+    if (
+      product.packagingChildProductId ||
+      packaging.conversionFactor.lessThanOrEqualTo(0)
+    ) {
+      throw new Error("Configuração de embalagem inválida.");
+    }
+
+    const quantityToAdd = packaging.conversionFactor.mul(quantity);
+
+    const closedUpdate = await tx.stockPackagingBalance.updateMany({
+      where: {
+        stockPackagingId: packaging.id,
+        quantity: {
+          gte: quantity,
+        },
+      },
+      data: {
+        quantity: {
+          decrement: quantity,
+        },
+      },
+    });
+
+    if (closedUpdate.count !== 1) {
+      throw new Error(
+        `Não há garrafas fechadas suficientes de ${product.name}.`,
+      );
+    }
+
+    const openUpdate = await tx.stockBalance.updateMany({
+      where: {
+        stockItemId: stockItem.id,
+      },
+      data: {
+        quantity: {
+          increment: quantityToAdd,
+        },
+      },
+    });
+
+    if (openUpdate.count !== 1) {
+      throw new Error("Não foi possível atualizar o estoque aberto.");
+    }
+
+    await tx.stockMovement.create({
+      data: {
+        type: "OPEN_PACKAGING",
+        quantity: quantity.negated(),
+        unit: "UNIT",
+        reason: `Abertura de ${quantity.toString()} garrafa(s) de ${product.name}.`,
+        reference,
+        stockItemId: stockItem.id,
+        stockPackagingId: packaging.id,
+        userId: session.user.id,
+      },
+    });
+
+    await tx.stockMovement.create({
+      data: {
+        type: "OPEN_PACKAGING",
+        quantity: quantityToAdd,
+        unit: "ML",
+        reason: `Recebimento de ${quantityToAdd.toString()} ml pela abertura de ${product.name}.`,
+        reference,
+        stockItemId: stockItem.id,
+        userId: session.user.id,
+      },
+    });
   });
 
   revalidateStockPages();

@@ -35,6 +35,20 @@ function getOptionalNumber(formData: FormData, field: string) {
   return number;
 }
 
+function getRepeatedTexts(formData: FormData, field: string) {
+  return formData.getAll(field).map((value) => String(value).trim());
+}
+
+function parseRepeatedNumber(value: string, field: string) {
+  const number = Number(value.replace(",", "."));
+
+  if (!Number.isFinite(number) || number <= 0) {
+    throw new Error(`Informe uma quantidade válida em ${field}.`);
+  }
+
+  return number;
+}
+
 const validTypes = [
   "STANDARD",
   "SUPPLY",
@@ -87,65 +101,254 @@ export async function createProduct(formData: FormData) {
   const categoryId = getText(formData, "categoryId");
 
   const type = getText(formData, "type");
-  const unit = getText(formData, "unit");
 
   const salePrice = getNumber(formData, "salePrice");
   const purchaseCost = getNumber(formData, "purchaseCost");
-  const minStock = getNumber(formData, "minStock");
-  const initialStock = getNumber(formData, "initialStock");
-
-  const bottleCapacityMl = getOptionalNumber(
-    formData,
-    "bottleCapacityMl",
-  );
-
-  const ingredientStockItemId = getText(
-    formData,
-    "ingredientStockItemId",
-  );
-
-  const recipeQuantityMl = getOptionalNumber(
-    formData,
-    "recipeQuantityMl",
-  );
 
   if (!code || !name || !categoryId) {
     throw new Error("Preencha código, nome e categoria.");
   }
 
   validateType(type);
-  validateUnit(unit);
 
-  if (type === "COMPOSITE" || type === "COMBO") {
+  if (type === "COMPOSITE") {
     throw new Error(
-      "Composições e combos serão disponibilizados em uma próxima etapa.",
+      "O tipo Composição não é utilizado. Cadastre esse produto como Dose.",
     );
   }
 
-  if (type === "FRACTIONAL") {
-    if (!ingredientStockItemId || !recipeQuantityMl) {
+  const isRecipe = type === "FRACTIONAL";
+  const isCombo = type === "COMBO";
+
+  if (isRecipe || isCombo) {
+    const initialStock = getNumber(formData, "initialStock");
+    const initialOpenQuantity = getNumber(
+      formData,
+      "initialOpenQuantity",
+    );
+
+    if (initialStock > 0 || initialOpenQuantity > 0) {
+      throw new Error("Doses e combos não possuem estoque próprio.");
+    }
+
+    const recipeIds = getRepeatedTexts(
+      formData,
+      "recipeStockItemId",
+    );
+    const recipeQuantities = getRepeatedTexts(
+      formData,
+      "recipeQuantity",
+    );
+
+    const comboIds = getRepeatedTexts(
+      formData,
+      "comboProductId",
+    );
+    const comboQuantities = getRepeatedTexts(
+      formData,
+      "comboQuantity",
+    );
+
+    if (isRecipe) {
+      if (
+        recipeIds.length === 0 ||
+        recipeIds.length !== recipeQuantities.length
+      ) {
+        throw new Error("Adicione pelo menos um ingrediente à dose.");
+      }
+
+      if (new Set(recipeIds).size !== recipeIds.length) {
+        throw new Error(
+          "O mesmo ingrediente não pode aparecer duas vezes na receita. Some as quantidades em uma única linha.",
+        );
+      }
+    }
+
+    if (isCombo) {
+      if (
+        comboIds.length === 0 ||
+        comboIds.length !== comboQuantities.length
+      ) {
+        throw new Error("Adicione pelo menos um produto ao combo.");
+      }
+
+      if (new Set(comboIds).size !== comboIds.length) {
+        throw new Error(
+          "O mesmo produto não pode aparecer duas vezes no combo. Some as quantidades em uma única linha.",
+        );
+      }
+    }
+
+    const recipeItems = isRecipe
+      ? recipeIds.map((stockItemId, index) => ({
+        stockItemId,
+        quantity: parseRepeatedNumber(
+          recipeQuantities[index],
+          "ingrediente",
+        ),
+      }))
+      : [];
+
+    const comboItems = isCombo
+      ? comboIds.map((componentProductId, index) => ({
+        componentProductId,
+        quantity: parseRepeatedNumber(
+          comboQuantities[index],
+          "produto do combo",
+        ),
+      }))
+      : [];
+
+    await prisma.$transaction(async (tx) => {
+      const category = await tx.category.findUnique({
+        where: { id: categoryId },
+      });
+
+      if (!category) {
+        throw new Error("Categoria não encontrada.");
+      }
+
+      if (isRecipe) {
+        const ingredients = await tx.stockItem.findMany({
+          where: {
+            id: { in: recipeItems.map((item) => item.stockItemId) },
+            active: true,
+          },
+          select: { id: true },
+        });
+
+        if (ingredients.length !== recipeItems.length) {
+          throw new Error(
+            "Um ou mais ingredientes não existem ou estão inativos.",
+          );
+        }
+
+        await tx.product.create({
+          data: {
+            code,
+            barcode,
+            name,
+            description,
+            type: "FRACTIONAL",
+            salePrice,
+            categoryId,
+            recipeItems: {
+              create: recipeItems,
+            },
+          },
+        });
+      }
+
+      if (isCombo) {
+        const components = await tx.product.findMany({
+          where: {
+            id: { in: comboItems.map((item) => item.componentProductId) },
+            active: true,
+            type: { in: ["STANDARD", "SUPPLY"] },
+            stockItemId: { not: null },
+          },
+          select: { id: true },
+        });
+
+        if (components.length !== comboItems.length) {
+          throw new Error(
+            "Um ou mais componentes não são produtos comuns ativos com estoque vinculado.",
+          );
+        }
+
+        await tx.product.create({
+          data: {
+            code,
+            barcode,
+            name,
+            description,
+            type: "COMBO",
+            salePrice,
+            categoryId,
+            comboItems: {
+              create: comboItems,
+            },
+          },
+        });
+      }
+    });
+
+    revalidatePath("/dashboard/products");
+    revalidatePath("/dashboard/pos");
+    revalidatePath("/dashboard");
+    redirect("/dashboard/products");
+  }
+
+  if (type !== "STANDARD" && type !== "SUPPLY") {
+    throw new Error("Tipo de produto não suportado.");
+  }
+
+  const unit = getText(formData, "unit");
+  validateUnit(unit);
+
+  const minStock = getNumber(formData, "minStock");
+  const initialStock = getNumber(formData, "initialStock");
+  const initialOpenQuantity = getNumber(
+    formData,
+    "initialOpenQuantity",
+  );
+
+  const packagingMode = getText(formData, "packagingMode") || "NONE";
+
+  if (!["NONE", "SELF", "CHILD"].includes(packagingMode)) {
+    throw new Error("Tipo de embalagem inválido.");
+  }
+
+  const hasSelfPackaging = packagingMode === "SELF";
+  const hasChildPackaging = packagingMode === "CHILD";
+  const hasPackaging = hasSelfPackaging || hasChildPackaging;
+
+  const packagingName = getText(formData, "packagingName");
+
+  const packagingConversionFactor = hasSelfPackaging
+    ? getOptionalNumber(formData, "packagingConversionFactor")
+    : null;
+
+  const packagingChildProductId = hasChildPackaging
+    ? getText(formData, "packagingChildProductId")
+    : "";
+
+  const packagingChildQuantity = hasChildPackaging
+    ? getOptionalNumber(formData, "packagingChildQuantity")
+    : null;
+
+  if (hasSelfPackaging) {
+    if (!packagingName || packagingConversionFactor === null) {
       throw new Error(
-        "Selecione o ingrediente e informe o consumo em ml por dose.",
+        "Informe o nome e a quantidade por embalagem.",
+      );
+    }
+  }
+
+  if (hasChildPackaging) {
+    if (unit !== "UNIT") {
+      throw new Error(
+        "Uma embalagem de outro produto deve utilizar a unidade Unidade.",
       );
     }
 
-    if (initialStock > 0) {
+    if (!packagingChildProductId || packagingChildQuantity === null) {
       throw new Error(
-        "Doses não possuem estoque próprio. O estoque é controlado pelo ingrediente.",
-      );
-    }
-  } else {
-    if (recipeQuantityMl || ingredientStockItemId) {
-      throw new Error(
-        "A composição de ingrediente deve ser preenchida somente para doses.",
+        "Selecione o produto gerado pela embalagem e informe a quantidade.",
       );
     }
 
-    if (bottleCapacityMl && unit !== "ML") {
+    if (initialOpenQuantity > 0) {
       throw new Error(
-        "Para cadastrar uma garrafa fracionável, selecione ML como unidade de estoque.",
+        "Embalagens comerciais não possuem quantidade aberta. Informe somente a quantidade de embalagens fechadas.",
       );
     }
+  }
+
+  if (!hasSelfPackaging && !hasChildPackaging && initialOpenQuantity > 0) {
+    throw new Error(
+      "O saldo já aberto exige uma embalagem configurada.",
+    );
   }
 
   await prisma.$transaction(async (tx) => {
@@ -157,57 +360,53 @@ export async function createProduct(formData: FormData) {
       throw new Error("Categoria não encontrada.");
     }
 
-    if (type === "FRACTIONAL") {
-      const ingredient = await tx.stockItem.findUnique({
-        where: { id: ingredientStockItemId },
-      });
+    let childProduct = null;
 
-      if (!ingredient || !ingredient.active) {
-        throw new Error("Ingrediente não encontrado ou inativo.");
-      }
-
-      if (ingredient.unit !== "ML") {
-        throw new Error(
-          "O ingrediente selecionado precisa utilizar mililitros (ML).",
-        );
-      }
-
-      await tx.product.create({
-        data: {
-          code,
-          barcode,
-          name,
-          description,
-          type,
-          salePrice,
-          categoryId,
-          recipeItems: {
-            create: {
-              stockItemId: ingredient.id,
-              quantity: recipeQuantityMl!,
+    if (hasChildPackaging) {
+      childProduct = await tx.product.findFirst({
+        where: {
+          id: packagingChildProductId,
+          active: true,
+          type: { in: ["STANDARD", "SUPPLY"] },
+          stockItem: {
+            is: {
+              active: true,
+              unit: "UNIT",
             },
           },
+          stockPackagingId: null,
+          packagingChildProductId: null,
+        },
+        select: {
+          id: true,
+          name: true,
         },
       });
 
-      return;
+      if (!childProduct) {
+        throw new Error(
+          "O produto filho precisa ser um produto comum ativo, com estoque próprio em unidades e sem embalagem de conversão.",
+        );
+      }
     }
 
-    const isBottle = bottleCapacityMl !== null;
+    const factor = hasSelfPackaging
+      ? packagingConversionFactor!
+      : 1;
 
     const stockItem = await tx.stockItem.create({
       data: {
         name,
         unit,
-        minStock: isBottle
-          ? minStock * bottleCapacityMl
-          : minStock,
-        purchaseCost: isBottle
-          ? purchaseCost / bottleCapacityMl
+        minStock: hasSelfPackaging ? minStock * factor : minStock,
+        purchaseCost: hasSelfPackaging
+          ? purchaseCost / factor
           : purchaseCost,
         balance: {
           create: {
-            quantity: isBottle ? 0 : initialStock,
+            quantity: hasSelfPackaging
+              ? initialOpenQuantity
+              : initialStock,
           },
         },
       },
@@ -215,11 +414,11 @@ export async function createProduct(formData: FormData) {
 
     let stockPackagingId: string | undefined;
 
-    if (isBottle) {
+    if (hasSelfPackaging) {
       const packaging = await tx.stockPackaging.create({
         data: {
-          name: `Garrafa ${bottleCapacityMl} ml`,
-          conversionFactor: bottleCapacityMl,
+          name: packagingName,
+          conversionFactor: factor,
           stockItemId: stockItem.id,
           balance: {
             create: {
@@ -243,18 +442,58 @@ export async function createProduct(formData: FormData) {
         categoryId,
         stockItemId: stockItem.id,
         stockPackagingId,
+        ...(hasChildPackaging
+          ? {
+            packagingChildProductId: childProduct!.id,
+            packagingChildQuantity: packagingChildQuantity!,
+          }
+          : {}),
       },
     });
 
-    if (initialStock > 0) {
+    if (hasSelfPackaging && initialStock > 0) {
       await tx.stockMovement.create({
         data: {
           type: "INITIAL",
           quantity: initialStock,
-          unit: isBottle ? "UNIT" : unit,
-          reason: "Estoque inicial do cadastro",
+          unit: "UNIT",
+          reason: "Estoque inicial de embalagens fechadas",
           stockItemId: stockItem.id,
           stockPackagingId,
+          userId: session.user.id,
+        },
+      });
+    }
+
+    if (hasChildPackaging && initialStock > 0) {
+      await tx.stockMovement.create({
+        data: {
+          type: "INITIAL",
+          quantity: initialStock,
+          unit: "UNIT",
+          reason: `Estoque inicial de embalagens comerciais (${childProduct!.name})`,
+          stockItemId: stockItem.id,
+          userId: session.user.id,
+        },
+      });
+    }
+
+    const openQuantity = hasSelfPackaging
+      ? initialOpenQuantity
+      : hasChildPackaging
+        ? 0
+        : initialStock;
+
+    if (openQuantity > 0) {
+      await tx.stockMovement.create({
+        data: {
+          type: "INITIAL",
+          quantity: openQuantity,
+          unit,
+          reason: hasSelfPackaging
+            ? "Estoque inicial de produto já aberto ou avulso"
+            : "Estoque inicial do cadastro",
+          stockItemId: stockItem.id,
           userId: session.user.id,
         },
       });
@@ -263,9 +502,12 @@ export async function createProduct(formData: FormData) {
 
   revalidatePath("/dashboard/products");
   revalidatePath("/dashboard/stock");
+  revalidatePath("/dashboard/stock/movements");
+  revalidatePath("/dashboard/pos");
   revalidatePath("/dashboard");
   redirect("/dashboard/products");
 }
+
 
 export async function updateProduct(
   id: string,
@@ -278,20 +520,19 @@ export async function updateProduct(
   const name = getText(formData, "name");
   const description = getText(formData, "description") || null;
   const categoryId = getText(formData, "categoryId");
-
   const type = getText(formData, "type");
-  const unit = getText(formData, "unit");
 
   const salePrice = getNumber(formData, "salePrice");
-  const purchaseCost = getNumber(formData, "purchaseCost");
-  const minStock = getNumber(formData, "minStock");
 
   if (!code || !name || !categoryId) {
     throw new Error("Preencha código, nome e categoria.");
   }
 
   validateType(type);
-  validateUnit(unit);
+
+  if (type === "COMPOSITE") {
+    throw new Error("O tipo Composição não é utilizado.");
+  }
 
   await prisma.$transaction(async (tx) => {
     const [currentProduct, category] = await Promise.all([
@@ -299,6 +540,7 @@ export async function updateProduct(
         where: { id },
         include: {
           recipeItems: true,
+          comboItems: true,
           stockItem: true,
           stockPackaging: true,
         },
@@ -308,8 +550,8 @@ export async function updateProduct(
       }),
     ]);
 
-    if (!currentProduct) {
-      throw new Error("Produto não encontrado.");
+    if (!currentProduct || !currentProduct.active) {
+      throw new Error("Produto não encontrado ou inativo.");
     }
 
     if (!category) {
@@ -322,12 +564,19 @@ export async function updateProduct(
       );
     }
 
+    // Produtos com estoque próprio.
     if (currentProduct.stockItem) {
+      const unit = getText(formData, "unit");
+      validateUnit(unit);
+
       if (unit !== currentProduct.stockItem.unit) {
         throw new Error(
           "Não é possível alterar a unidade de um item que já possui controle de estoque.",
         );
       }
+
+      const minStock = getNumber(formData, "minStock");
+      const purchaseCost = getNumber(formData, "purchaseCost");
 
       const conversionFactor =
         currentProduct.stockPackaging?.conversionFactor.toNumber() ?? 1;
@@ -338,6 +587,128 @@ export async function updateProduct(
           name,
           minStock: minStock * conversionFactor,
           purchaseCost: purchaseCost / conversionFactor,
+        },
+      });
+    }
+
+    // Atualização dos ingredientes de uma dose.
+    if (currentProduct.type === "FRACTIONAL") {
+      const recipeIds = getRepeatedTexts(
+        formData,
+        "recipeStockItemId",
+      );
+
+      const recipeQuantities = getRepeatedTexts(
+        formData,
+        "recipeQuantity",
+      );
+
+      if (
+        recipeIds.length === 0 ||
+        recipeIds.length !== recipeQuantities.length
+      ) {
+        throw new Error("Adicione pelo menos um ingrediente à dose.");
+      }
+
+      if (new Set(recipeIds).size !== recipeIds.length) {
+        throw new Error(
+          "O mesmo ingrediente não pode aparecer duas vezes na receita.",
+        );
+      }
+
+      const recipeItems = recipeIds.map((stockItemId, index) => ({
+        stockItemId,
+        quantity: parseRepeatedNumber(
+          recipeQuantities[index],
+          "ingrediente",
+        ),
+      }));
+
+      const ingredients = await tx.stockItem.findMany({
+        where: {
+          id: { in: recipeItems.map((item) => item.stockItemId) },
+          active: true,
+        },
+        select: { id: true },
+      });
+
+      if (ingredients.length !== recipeItems.length) {
+        throw new Error(
+          "Um ou mais ingredientes não existem ou estão inativos.",
+        );
+      }
+
+      await tx.product.update({
+        where: { id },
+        data: {
+          recipeItems: {
+            deleteMany: {},
+            create: recipeItems,
+          },
+        },
+      });
+    }
+
+    // Atualização dos componentes de um combo.
+    if (currentProduct.type === "COMBO") {
+      const comboIds = getRepeatedTexts(
+        formData,
+        "comboProductId",
+      );
+
+      const comboQuantities = getRepeatedTexts(
+        formData,
+        "comboQuantity",
+      );
+
+      if (
+        comboIds.length === 0 ||
+        comboIds.length !== comboQuantities.length
+      ) {
+        throw new Error("Adicione pelo menos um produto ao combo.");
+      }
+
+      if (new Set(comboIds).size !== comboIds.length) {
+        throw new Error(
+          "O mesmo produto não pode aparecer duas vezes no combo.",
+        );
+      }
+
+      if (comboIds.includes(id)) {
+        throw new Error("Um combo não pode conter a si próprio.");
+      }
+
+      const comboItems = comboIds.map((componentProductId, index) => ({
+        componentProductId,
+        quantity: parseRepeatedNumber(
+          comboQuantities[index],
+          "produto do combo",
+        ),
+      }));
+
+      const components = await tx.product.findMany({
+        where: {
+          id: { in: comboItems.map((item) => item.componentProductId) },
+          active: true,
+          type: { in: ["STANDARD", "SUPPLY"] },
+          stockItemId: { not: null },
+        },
+        select: { id: true },
+      });
+
+      if (components.length !== comboItems.length) {
+        throw new Error(
+          "Um ou mais componentes não são produtos comuns ativos com estoque vinculado.",
+        );
+      }
+
+      await tx.product.update({
+        where: { id },
+        data: {
+          comboItems: {
+            deleteMany: {},
+            create: comboItems,
+          },
         },
       });
     }
@@ -359,9 +730,12 @@ export async function updateProduct(
   revalidatePath(`/dashboard/products/${id}/edit`);
   revalidatePath("/dashboard/stock");
   revalidatePath("/dashboard/stock/movements");
+  revalidatePath("/dashboard/pos");
   revalidatePath("/dashboard");
+
   redirect("/dashboard/products");
 }
+
 
 export async function deactivateProduct(id: string) {
   await requireModuleAccess("PRODUCTS");

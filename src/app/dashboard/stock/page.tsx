@@ -9,6 +9,8 @@ import {
   registerStockEntry,
   registerStockLoss,
   registerStockAdjustment,
+  openCommercialPackaging,
+  openStockBottle,
 } from "./actions";
 
 export const metadata = {
@@ -75,6 +77,7 @@ async function StockContent() {
           balance: true,
         },
       },
+      packagingChildProduct: true,
     },
     orderBy: {
       name: "asc",
@@ -86,24 +89,37 @@ async function StockContent() {
     .map((product) => {
       const stockItem = product.stockItem!;
       const packaging = product.stockPackaging;
+      const childProduct = product.packagingChildProduct;
 
-      const openQuantity =
+      const stockQuantity =
         stockItem.balance?.quantity.toNumber() ?? 0;
 
-      const closedQuantity =
-        packaging?.balance?.quantity.toNumber() ?? 0;
+      const isCommercialPackaging = Boolean(childProduct);
 
-      const conversionFactor =
-        packaging?.conversionFactor.toNumber() ?? 1;
+      const closedQuantity = packaging
+        ? packaging.balance?.quantity.toNumber() ?? 0
+        : isCommercialPackaging
+          ? stockQuantity
+          : 0;
+
+      const openQuantity = isCommercialPackaging
+        ? 0
+        : stockQuantity;
+
+      const conversionFactor = packaging
+        ? packaging.conversionFactor.toNumber()
+        : isCommercialPackaging
+          ? product.packagingChildQuantity?.toNumber() ?? 1
+          : 1;
 
       const minimum = stockItem.minStock.toNumber();
       const cost = stockItem.purchaseCost.toNumber();
 
-      const totalBaseQuantity =
-        openQuantity + closedQuantity * conversionFactor;
+      const totalBaseQuantity = isCommercialPackaging
+        ? closedQuantity
+        : openQuantity + closedQuantity * conversionFactor;
 
       const totalValue = totalBaseQuantity * cost;
-
       const isLow = totalBaseQuantity <= minimum;
 
       return {
@@ -114,9 +130,11 @@ async function StockContent() {
         stockItemName: stockItem.name,
         unit: stockItem.unit,
         hasPackaging: Boolean(packaging),
+        isCommercialPackaging,
         packagingName: packaging?.name ?? null,
-        openQuantity,
+        childProductName: childProduct?.name ?? null,
         closedQuantity,
+        openQuantity,
         conversionFactor,
         minimum,
         totalValue,
@@ -228,16 +246,31 @@ async function StockContent() {
                       </td>
 
                       <td className="px-5 py-4">
-                        {product.hasPackaging
-                          ? `${formatQuantity(product.closedQuantity)} ${
-                              product.packagingName ?? "embalagens"
-                            }`
-                          : "—"}
+                        {product.isCommercialPackaging ? (
+                          <div>
+                            <span className="font-semibold">
+                              {formatQuantity(product.closedQuantity)} un.
+                            </span>
+                            <p className="mt-1 text-xs text-slate-500">
+                              Cada embalagem:{" "}
+                              {formatQuantity(product.conversionFactor)}{" "}
+                              {product.childProductName}
+                            </p>
+                          </div>
+                        ) : product.hasPackaging ? (
+                          `${formatQuantity(product.closedQuantity)} ${product.packagingName ?? "embalagens"
+                          }`
+                        ) : (
+                          "—"
+                        )}
                       </td>
 
                       <td className="px-5 py-4 font-semibold">
-                        {formatQuantity(product.openQuantity)}{" "}
-                        {getUnitLabel(product.unit)}
+                        {product.isCommercialPackaging
+                          ? "—"
+                          : `${formatQuantity(product.openQuantity)} ${getUnitLabel(
+                            product.unit,
+                          )}`}
                       </td>
 
                       <td className="px-5 py-4">
@@ -247,11 +280,10 @@ async function StockContent() {
 
                       <td className="px-5 py-4">
                         <span
-                          className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                            product.isLow
+                          className={`rounded-full px-3 py-1 text-xs font-semibold ${product.isLow
                               ? "bg-red-50 text-red-700"
                               : "bg-emerald-50 text-emerald-700"
-                          }`}
+                            }`}
                         >
                           {product.isLow ? "Estoque baixo" : "Normal"}
                         </span>
@@ -259,6 +291,55 @@ async function StockContent() {
 
                       <td className="px-5 py-4">
                         <div className="flex flex-wrap gap-3">
+                          {product.isCommercialPackaging && (
+                            <form action={openCommercialPackaging}>
+                              <input
+                                type="hidden"
+                                name="productId"
+                                value={product.id}
+                              />
+                              <button
+                                type="submit"
+                                className="font-semibold text-blue-700 hover:underline"
+                              >
+                                Abrir embalagem
+                              </button>
+                            </form>
+                          )}
+
+                          {product.hasPackaging &&
+                            !product.isCommercialPackaging &&
+                            product.unit === "ML" && (
+                              <form
+                                action={openStockBottle}
+                                className="flex flex-wrap items-center gap-2"
+                              >
+                                <input
+                                  type="hidden"
+                                  name="productId"
+                                  value={product.id}
+                                />
+
+                                <input
+                                  type="number"
+                                  name="quantity"
+                                  min="1"
+                                  step="1"
+                                  defaultValue="1"
+                                  required
+                                  aria-label={`Quantidade de garrafas para abrir de ${product.name}`}
+                                  className="w-16 rounded border border-slate-300 p-1.5"
+                                />
+
+                                <button
+                                  type="submit"
+                                  className="font-semibold text-purple-700 hover:underline"
+                                >
+                                  Abrir garrafa(s)
+                                </button>
+                              </form>
+                            )}
+
                           <Link
                             href={`/dashboard/stock?entry=${product.id}#movimentar`}
                             className="font-medium text-emerald-700 hover:underline"
@@ -320,9 +401,11 @@ async function StockContent() {
                 {stockItems.map((product) => (
                   <option key={product.id} value={product.id}>
                     {product.name}
-                    {product.hasPackaging
-                      ? ` (${product.packagingName})`
-                      : ` (${getUnitLabel(product.unit)})`}
+                    {product.isCommercialPackaging
+                      ? ` (${product.conversionFactor} ${product.childProductName} por embalagem)`
+                      : product.hasPackaging
+                        ? ` (${product.packagingName})`
+                        : ` (${getUnitLabel(product.unit)})`}
                   </option>
                 ))}
               </select>
@@ -386,9 +469,11 @@ async function StockContent() {
                 {stockItems.map((product) => (
                   <option key={product.id} value={product.id}>
                     {product.name}
-                    {product.hasPackaging
-                      ? ` (${product.packagingName})`
-                      : ` (${getUnitLabel(product.unit)})`}
+                    {product.isCommercialPackaging
+                      ? ` (${product.conversionFactor} ${product.childProductName} por embalagem)`
+                      : product.hasPackaging
+                        ? ` (${product.packagingName})`
+                        : ` (${getUnitLabel(product.unit)})`}
                   </option>
                 ))}
               </select>
@@ -452,9 +537,11 @@ async function StockContent() {
                 {stockItems.map((product) => (
                   <option key={product.id} value={product.id}>
                     {product.name}
-                    {product.hasPackaging
-                      ? ` (${product.packagingName})`
-                      : ` (${getUnitLabel(product.unit)})`}
+                    {product.isCommercialPackaging
+                      ? ` (${product.conversionFactor} ${product.childProductName} por embalagem)`
+                      : product.hasPackaging
+                        ? ` (${product.packagingName})`
+                        : ` (${getUnitLabel(product.unit)})`}
                   </option>
                 ))}
               </select>
