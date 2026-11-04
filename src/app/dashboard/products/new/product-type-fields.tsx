@@ -18,6 +18,20 @@ type Props = {
   stockItems: StockItemOption[];
   products: ProductOption[];
   packagingChildProducts: ProductOption[];
+  packagingParentProducts: ProductOption[];
+};
+
+type CompositionOptionState = {
+  id: number;
+  stockItemId: string;
+  quantity: string;
+};
+
+type CompositionGroupState = {
+  id: number;
+  name: string;
+  required: boolean;
+  options: CompositionOptionState[];
 };
 
 const unitLabels = {
@@ -30,21 +44,28 @@ export function ProductTypeFields({
   stockItems,
   products,
   packagingChildProducts,
+  packagingParentProducts,
 }: Props) {
   const [type, setType] = useState("STANDARD");
   const [packagingMode, setPackagingMode] = useState("NONE");
   const [unit, setUnit] = useState<"UNIT" | "ML" | "GRAM">("UNIT");
 
-  const [recipeRows, setRecipeRows] = useState([0]);
   const [comboRows, setComboRows] = useState([0]);
+  const [nextId, setNextId] = useState(1);
 
-  function addRecipeRow() {
-    setRecipeRows((rows) => [...rows, Math.max(...rows) + 1]);
-  }
+  const [packagingParentProductId, setPackagingParentProductId] = useState("");
+  const [packagingParentQuantity, setPackagingParentQuantity] = useState("");
 
-  function removeRecipeRow(index: number) {
-    setRecipeRows((rows) => rows.filter((row) => row !== index));
-  }
+  const [compositionGroups, setCompositionGroups] = useState<
+    CompositionGroupState[]
+  >([
+    {
+      id: 0,
+      name: "Base",
+      required: true,
+      options: [{ id: 0, stockItemId: "", quantity: "" }],
+    },
+  ]);
 
   function addComboRow() {
     setComboRows((rows) => [...rows, Math.max(...rows) + 1]);
@@ -57,10 +78,134 @@ export function ProductTypeFields({
   function changePackagingMode(value: string) {
     setPackagingMode(value);
 
-    if (value === "CHILD") {
+    if (value === "SELF") {
+      setUnit("ML");
+    } else {
       setUnit("UNIT");
     }
   }
+
+  function addCompositionGroup() {
+    const id = nextId;
+
+    setNextId((current) => current + 1);
+
+    setCompositionGroups((groups) => [
+      ...groups,
+      {
+        id,
+        name: "",
+        required: true,
+        options: [
+          {
+            id: id + 100000,
+            stockItemId: "",
+            quantity: "",
+          },
+        ],
+      },
+    ]);
+  }
+
+  function removeCompositionGroup(groupId: number) {
+    setCompositionGroups((groups) =>
+      groups.filter((group) => group.id !== groupId),
+    );
+  }
+
+  function updateGroupName(groupId: number, name: string) {
+    setCompositionGroups((groups) =>
+      groups.map((group) =>
+        group.id === groupId ? { ...group, name } : group,
+      ),
+    );
+  }
+
+  function updateGroupRequired(groupId: number, required: boolean) {
+    setCompositionGroups((groups) =>
+      groups.map((group) =>
+        group.id === groupId ? { ...group, required } : group,
+      ),
+    );
+  }
+
+  function addCompositionOption(groupId: number) {
+    const id = nextId + 200000;
+
+    setNextId((current) => current + 1);
+
+    setCompositionGroups((groups) =>
+      groups.map((group) =>
+        group.id === groupId
+          ? {
+            ...group,
+            options: [
+              ...group.options,
+              {
+                id,
+                stockItemId: "",
+                quantity: "",
+              },
+            ],
+          }
+          : group,
+      ),
+    );
+  }
+
+  function removeCompositionOption(
+    groupId: number,
+    optionId: number,
+  ) {
+    setCompositionGroups((groups) =>
+      groups.map((group) =>
+        group.id === groupId
+          ? {
+            ...group,
+            options: group.options.filter(
+              (option) => option.id !== optionId,
+            ),
+          }
+          : group,
+      ),
+    );
+  }
+
+  function updateCompositionOption(
+    groupId: number,
+    optionId: number,
+    field: "stockItemId" | "quantity",
+    value: string,
+  ) {
+    setCompositionGroups((groups) =>
+      groups.map((group) =>
+        group.id === groupId
+          ? {
+            ...group,
+            options: group.options.map((option) =>
+              option.id === optionId
+                ? { ...option, [field]: value }
+                : option,
+            ),
+          }
+          : group,
+      ),
+    );
+  }
+
+  const compositionPayload = compositionGroups.map(
+    (group, position) => ({
+      name: group.name.trim(),
+      minSelections: group.required ? 1 : 0,
+      maxSelections: 1,
+      position,
+      options: group.options.map((option, optionPosition) => ({
+        stockItemId: option.stockItemId,
+        quantity: option.quantity,
+        position: optionPosition,
+      })),
+    }),
+  );
 
   return (
     <>
@@ -108,7 +253,7 @@ export function ProductTypeFields({
                   Embalagem do próprio produto (ex.: whisky 1L)
                 </option>
                 <option value="CHILD">
-                  Embalagem de outro produto (ex.: fardo de latas)
+                  Embalagens e embalados (ex.: fardo de latas)
                 </option>
               </select>
             </label>
@@ -164,6 +309,67 @@ export function ProductTypeFields({
             )}
 
             {packagingMode === "CHILD" && (
+              <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-4">
+                <h3 className="font-semibold text-blue-900">
+                  Origem do produto
+                </h3>
+
+                <p className="mt-1 text-sm text-blue-800">
+                  Este produto é obtido ao abrir outra embalagem?
+                  Se sim, selecione o produto de origem.
+                </p>
+
+                <label className="mt-4 block text-sm font-medium">
+                  Produto de origem
+                  <select
+                    name="packagingParentProductId"
+                    value={packagingParentProductId}
+                    onChange={(event) => {
+                      setPackagingParentProductId(event.target.value);
+                      setPackagingParentQuantity("");
+                    }}
+                    className="mt-2 w-full rounded-lg border border-slate-300 bg-white p-3"
+                  >
+                    <option value="">
+                      Não possui origem em outra embalagem
+                    </option>
+
+                    {packagingParentProducts.map((product) => (
+                      <option key={product.id} value={product.id}>
+                        {product.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                {packagingParentProductId && (
+                  <label className="mt-4 block text-sm font-medium">
+                    Quantidade deste produto gerada ao abrir a embalagem *
+                    <input
+                      name="packagingParentQuantity"
+                      type="number"
+                      min="0.001"
+                      step="0.001"
+                      required
+                      value={packagingParentQuantity}
+                      onChange={(event) =>
+                        setPackagingParentQuantity(event.target.value)
+                      }
+                      placeholder="Ex.: 10"
+                      className="mt-2 w-full rounded-lg border border-slate-300 p-3"
+                    />
+                  </label>
+                )}
+
+                {packagingParentProducts.length === 0 && (
+                  <p className="mt-3 text-sm text-amber-800">
+                    Não existem produtos disponíveis como origem.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {packagingMode === "CHILD" && (
               <div className="mt-4 space-y-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
                 <div>
                   <h3 className="font-semibold text-emerald-900">
@@ -206,7 +412,7 @@ export function ProductTypeFields({
                     step="0.001"
                     required
                     placeholder="Ex.: 12"
-                    className="mt-2 w-full rounded-lg border border-slate-300 bg-white p-3"
+                    className="mt-2 w-full rounded-lg border border-slate-300 p-3"
                   />
                 </label>
 
@@ -219,8 +425,8 @@ export function ProductTypeFields({
                 )}
 
                 <p className="text-xs text-emerald-800">
-                  Exemplo: 1 fardo de Skol gera 12 unidades de Skol Lata.
-                  Os dois produtos terão saldos independentes.
+                  Exemplo: 1 fardo gera 12 latas. Os dois produtos terão
+                  saldos independentes.
                 </p>
               </div>
             )}
@@ -291,59 +497,151 @@ export function ProductTypeFields({
 
       {type === "FRACTIONAL" && (
         <section className="border-t border-slate-100 pt-6">
-          <h2 className="mb-2 font-bold">Ingredientes da dose</h2>
+          <h2 className="mb-2 font-bold">Ficha técnica da dose</h2>
 
           <p className="mb-4 text-sm text-slate-500">
-            Adicione todos os produtos consumidos em uma unidade da dose.
-            Cada ingrediente utiliza sua própria unidade de controle.
+            Crie grupos de ingredientes. Em cada grupo, o cliente poderá
+            escolher uma opção. Grupos obrigatórios precisam ter uma
+            escolha; grupos opcionais podem ficar sem seleção.
           </p>
 
-          <div className="space-y-3">
-            {recipeRows.map((row) => (
+          <input
+            type="hidden"
+            name="compositionGroups"
+            value={JSON.stringify(compositionPayload)}
+          />
+
+          <div className="space-y-5">
+            {compositionGroups.map((group, groupIndex) => (
               <div
-                key={row}
-                className="grid gap-3 rounded-lg border border-slate-200 p-3 sm:grid-cols-[1fr_130px_auto]"
+                key={group.id}
+                className="rounded-xl border border-slate-200 p-4"
               >
-                <label className="text-sm font-medium">
-                  Ingrediente
-                  <select
-                    name="recipeStockItemId"
-                    required
-                    defaultValue=""
-                    className="mt-2 w-full rounded-lg border border-slate-300 bg-white p-3"
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <h3 className="font-semibold">
+                    Grupo {groupIndex + 1}
+                  </h3>
+
+                  <button
+                    type="button"
+                    onClick={() => removeCompositionGroup(group.id)}
+                    disabled={compositionGroups.length === 1}
+                    className="rounded-lg border border-red-200 px-3 py-2 text-xs font-medium text-red-600 disabled:opacity-40"
                   >
-                    <option value="" disabled>
-                      Selecione
-                    </option>
+                    Remover grupo
+                  </button>
+                </div>
 
-                    {stockItems.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name} ({unitLabels[item.unit]})
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-sm font-medium">
+                    Nome do grupo *
+                    <input
+                      value={group.name}
+                      onChange={(event) =>
+                        updateGroupName(group.id, event.target.value)
+                      }
+                      required
+                      placeholder="Ex.: Energético"
+                      className="mt-2 w-full rounded-lg border border-slate-300 p-3"
+                    />
+                  </label>
+
+                  <label className="text-sm font-medium">
+                    Regra de seleção
+                    <select
+                      value={group.required ? "REQUIRED" : "OPTIONAL"}
+                      onChange={(event) =>
+                        updateGroupRequired(
+                          group.id,
+                          event.target.value === "REQUIRED",
+                        )
+                      }
+                      className="mt-2 w-full rounded-lg border border-slate-300 bg-white p-3"
+                    >
+                      <option value="REQUIRED">
+                        Obrigatório — escolher 1
                       </option>
-                    ))}
-                  </select>
-                </label>
+                      <option value="OPTIONAL">
+                        Opcional — escolher até 1
+                      </option>
+                    </select>
+                  </label>
+                </div>
 
-                <label className="text-sm font-medium">
-                  Quantidade
-                  <input
-                    name="recipeQuantity"
-                    type="number"
-                    min="0.001"
-                    step="0.001"
-                    required
-                    placeholder="Ex.: 50"
-                    className="mt-2 w-full rounded-lg border border-slate-300 p-3"
-                  />
-                </label>
+                <div className="mt-5 space-y-3">
+                  <p className="text-sm font-semibold">Opções do grupo</p>
+
+                  {group.options.map((option) => (
+                    <div
+                      key={option.id}
+                      className="grid gap-3 rounded-lg bg-slate-50 p-3 sm:grid-cols-[1fr_130px_auto]"
+                    >
+                      <label className="text-sm font-medium">
+                        Ingrediente
+                        <select
+                          value={option.stockItemId}
+                          onChange={(event) =>
+                            updateCompositionOption(
+                              group.id,
+                              option.id,
+                              "stockItemId",
+                              event.target.value,
+                            )
+                          }
+                          required
+                          className="mt-2 w-full rounded-lg border border-slate-300 bg-white p-3"
+                        >
+                          <option value="">Selecione</option>
+
+                          {stockItems.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.name} ({unitLabels[item.unit]})
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="text-sm font-medium">
+                        Quantidade
+                        <input
+                          type="number"
+                          min="0.001"
+                          step="0.001"
+                          value={option.quantity}
+                          onChange={(event) =>
+                            updateCompositionOption(
+                              group.id,
+                              option.id,
+                              "quantity",
+                              event.target.value,
+                            )
+                          }
+                          required
+                          placeholder="Ex.: 50"
+                          className="mt-2 w-full rounded-lg border border-slate-300 p-3"
+                        />
+                      </label>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          removeCompositionOption(group.id, option.id)
+                        }
+                        disabled={group.options.length === 1}
+                        className="self-end rounded-lg border border-red-200 px-3 py-3 text-sm text-red-600 disabled:opacity-40"
+                      >
+                        Remover
+                      </button>
+                    </div>
+                  ))}
+                </div>
 
                 <button
                   type="button"
-                  onClick={() => removeRecipeRow(row)}
-                  disabled={recipeRows.length === 1}
-                  className="self-end rounded-lg border border-red-200 px-3 py-3 text-sm text-red-600 disabled:opacity-40"
+                  onClick={() => addCompositionOption(group.id)}
+                  className="mt-3 rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700"
                 >
-                  Remover
+                  + Adicionar opção
                 </button>
               </div>
             ))}
@@ -351,10 +649,10 @@ export function ProductTypeFields({
 
           <button
             type="button"
-            onClick={addRecipeRow}
-            className="mt-3 rounded-lg border border-emerald-600 px-4 py-2 text-sm font-semibold text-emerald-700"
+            onClick={addCompositionGroup}
+            className="mt-4 rounded-lg border border-emerald-600 px-4 py-2 text-sm font-semibold text-emerald-700"
           >
-            + Adicionar ingrediente
+            + Adicionar grupo
           </button>
 
           {stockItems.length === 0 && (

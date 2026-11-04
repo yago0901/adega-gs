@@ -55,6 +55,11 @@ async function NewProductContent() {
         },
         stockPackagingId: true,
         packagingChildProductId: true,
+        packagingParentProducts: {
+          select: {
+            id: true,
+          },
+        },
       },
     }),
   ]);
@@ -65,6 +70,18 @@ async function NewProductContent() {
   }));
 
   const packagingChildProducts = products
+    .filter(
+      (product) =>
+        product.stockItem?.unit === "UNIT" &&
+        product.stockPackagingId === null &&
+        product.packagingParentProducts.length === 0,
+    )
+    .map((product) => ({
+      id: product.id,
+      name: product.name,
+    }));
+
+  const packagingParentProducts = products
     .filter(
       (product) =>
         product.stockItem?.unit === "UNIT" &&
@@ -164,6 +181,7 @@ async function NewProductContent() {
             stockItems={stockItems}
             products={comboProducts}
             packagingChildProducts={packagingChildProducts}
+            packagingParentProducts={packagingParentProducts}
           />
 
           <section className="border-t border-slate-100 pt-6">

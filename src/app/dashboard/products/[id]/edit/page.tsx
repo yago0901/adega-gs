@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { requireModuleAccess } from "@/lib/permissions";
 import { updateProduct } from "../../actions";
 import { EditProductFields } from "./edit-product-fields";
+import { EditPackagingFields } from "./edit-packaging-fields";
 
 export default async function EditProductPage({
   params,
@@ -59,7 +60,38 @@ async function EditProductContent({
             name: true,
           },
         },
-        recipeItems: true,
+        packagingParentProducts: {
+          select: {
+            id: true,
+            name: true,
+            packagingChildQuantity: true,
+          },
+        },
+        composition: {
+          include: {
+            groups: {
+              orderBy: {
+                position: "asc",
+              },
+              include: {
+                options: {
+                  orderBy: {
+                    position: "asc",
+                  },
+                  include: {
+                    stockItem: {
+                      select: {
+                        id: true,
+                        name: true,
+                        unit: true,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
         comboItems: {
           include: {
             componentProduct: {
@@ -109,6 +141,16 @@ async function EditProductContent({
     notFound();
   }
 
+  const initialCompositionGroups =
+    product.composition?.groups.map((group) => ({
+      name: group.name,
+      required: group.minSelections > 0,
+      options: group.options.map((option) => ({
+        stockItemId: option.stockItemId,
+        quantity: option.quantity.toNumber(),
+      })),
+    })) ?? [];
+
   const action = updateProduct.bind(null, id);
 
   const conversionFactor =
@@ -122,11 +164,22 @@ async function EditProductContent({
     ? product.stockItem.purchaseCost.toNumber() * conversionFactor
     : 0;
 
-  const packagingMode = product.packagingChildProduct
-    ? "CHILD"
-    : product.stockPackaging
-      ? "SELF"
-      : "NONE";
+  const packagingParent = product.packagingParentProducts[0] ?? null;
+
+  const packagingProducts = Array.from(
+    new Map(
+      [
+        ...products,
+        ...(product.packagingChildProduct
+          ? [product.packagingChildProduct]
+          : []),
+        ...product.packagingParentProducts.map((parent) => ({
+          id: parent.id,
+          name: parent.name,
+        })),
+      ].map((item) => [item.id, item]),
+    ).values(),
+  );
 
   const typeLabels: Record<string, string> = {
     STANDARD: "Produto comum",
@@ -134,13 +187,6 @@ async function EditProductContent({
     FRACTIONAL: "Dose",
     COMBO: "Combo",
   };
-
-  const packagingDescription =
-    packagingMode === "SELF"
-      ? `${product.stockPackaging!.name} — ${conversionFactor} ${product.stockItem?.unit}`
-      : packagingMode === "CHILD"
-        ? `Gera ${product.packagingChildQuantity?.toString()} unidades de ${product.packagingChildProduct!.name}`
-        : "Estoque direto, sem embalagem configurada";
 
   return (
     <main className="min-h-screen bg-slate-100 p-5 md:p-8">
@@ -255,25 +301,20 @@ async function EditProductContent({
             </div>
 
             {(product.type === "STANDARD" || product.type === "SUPPLY") && (
-              <div className="mt-4 rounded-lg border border-slate-200 p-4">
-                <p className="text-sm font-semibold">Configuração de embalagem</p>
-                <p className="mt-2 text-sm text-slate-700">
-                  {packagingMode === "SELF"
-                    ? "Embalagem do próprio produto"
-                    : packagingMode === "CHILD"
-                      ? "Embalagem que gera outro produto"
-                      : "Sem embalagem / estoque direto"}
-                </p>
-                <p className="mt-1 text-sm text-slate-500">
-                  {packagingDescription}
-                </p>
-                <p className="mt-3 text-xs text-amber-800">
-                  A estrutura da embalagem não pode ser alterada nesta tela,
-                  para preservar o histórico de estoque. Se precisar mudar
-                  essa configuração, será necessário fazer um procedimento
-                  específico de conversão.
-                </p>
-              </div>
+              <EditPackagingFields
+                isSelfPackaging={Boolean(product.stockPackaging)}
+                products={packagingProducts.filter(
+                  (item) => item.id !== product.id,
+                )}
+                initialParentProductId={packagingParent?.id ?? ""}
+                initialParentQuantity={
+                  packagingParent?.packagingChildQuantity?.toString() ?? ""
+                }
+                initialChildProductId={product.packagingChildProduct?.id ?? ""}
+                initialChildQuantity={
+                  product.packagingChildQuantity?.toString() ?? ""
+                }
+              />
             )}
 
             {product.stockItem && (
@@ -309,10 +350,7 @@ async function EditProductContent({
             type={product.type}
             stockItems={stockItems}
             products={products.filter((item) => item.id !== product.id)}
-            initialRecipeItems={product.recipeItems.map((item) => ({
-              stockItemId: item.stockItemId,
-              quantity: item.quantity.toNumber(),
-            }))}
+            initialCompositionGroups={initialCompositionGroups}
             initialComboItems={product.comboItems.map((item) => ({
               componentProductId: item.componentProductId,
               quantity: item.quantity.toNumber(),

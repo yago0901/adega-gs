@@ -426,12 +426,9 @@ export async function openCommercialPackaging(formData: FormData) {
       throw new Error("Saldo do produto convertido não encontrado.");
     }
 
-    if (
-      childProduct.stockPackagingId !== null ||
-      childProduct.packagingChildProductId !== null
-    ) {
+    if (childProduct.stockPackagingId !== null) {
       throw new Error(
-        "O produto convertido não pode possuir outra conversão de embalagem.",
+        "O produto convertido não pode possuir embalagem própria do tipo SELF.",
       );
     }
 

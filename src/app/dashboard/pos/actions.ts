@@ -9,10 +9,24 @@ import { requireModuleAccess } from "@/lib/permissions";
 type SaleRequestItem = {
   productId: string;
   quantity: number;
+  selections?: {
+    groupId: string;
+    optionId: string;
+  }[];
+};
+
+type BottleOpening = {
+  stockItemId: string;
+  stockItemName: string;
+  stockPackagingId: string;
+  packagingName: string;
+  quantity: number;
+  volume: string;
 };
 
 type SaleResult =
   | { success: true; saleId: string; total: string }
+  | { success: true; confirmationRequired: true; openings: BottleOpening[]; }
   | { success: false; error: string };
 
 type Consumption = {
@@ -23,8 +37,14 @@ type Consumption = {
   name: string;
 };
 
+type SelectedCompositionOption = {
+  groupId: string;
+  optionId: string;
+};
+
 export async function finalizeSale(
   items: SaleRequestItem[],
+  confirmOpenings = false,
 ): Promise<SaleResult> {
   try {
     const session = await requireModuleAccess("POS");
@@ -36,8 +56,6 @@ export async function finalizeSale(
     if (items.length > 100) {
       return { success: false, error: "Limite de 100 itens por venda." };
     }
-
-    const quantities = new Map<string, Prisma.Decimal>();
 
     for (const item of items) {
       if (
@@ -54,14 +72,23 @@ export async function finalizeSale(
         };
       }
 
-      const quantity = new Prisma.Decimal(String(item.quantity));
-
-      quantities.set(
-        item.productId,
-        (quantities.get(item.productId) ?? new Prisma.Decimal(0)).plus(
-          quantity,
-        ),
-      );
+      if (
+        item.selections !== undefined &&
+        (!Array.isArray(item.selections) ||
+          item.selections.some(
+            (selection) =>
+              !selection ||
+              typeof selection.groupId !== "string" ||
+              !selection.groupId ||
+              typeof selection.optionId !== "string" ||
+              !selection.optionId,
+          ))
+      ) {
+        return {
+          success: false,
+          error: "As escolhas de composição são inválidas.",
+        };
+      }
     }
 
     const sale = await prisma.$transaction(async (tx) => {
@@ -72,9 +99,17 @@ export async function finalizeSale(
         include: {
           stockItem: true,
           stockPackaging: true,
-          recipeItems: {
+          composition: {
             include: {
-              stockItem: true,
+              groups: {
+                include: {
+                  options: {
+                    include: {
+                      stockItem: true,
+                    },
+                  },
+                },
+              },
             },
           },
           comboItems: {
@@ -83,9 +118,17 @@ export async function finalizeSale(
                 include: {
                   stockItem: true,
                   stockPackaging: true,
-                  recipeItems: {
+                  composition: {
                     include: {
-                      stockItem: true,
+                      groups: {
+                        include: {
+                          options: {
+                            include: {
+                              stockItem: true,
+                            },
+                          },
+                        },
+                      },
                     },
                   },
                 },
@@ -99,8 +142,8 @@ export async function finalizeSale(
         products.map((product) => [product.id, product]),
       );
 
-      const requestedProducts = Array.from(quantities.keys()).map((id) => {
-        const product = productMap.get(id);
+      const saleItems = items.map((request) => {
+        const product = productMap.get(request.productId);
 
         if (!product) {
           throw new Error(
@@ -108,26 +151,69 @@ export async function finalizeSale(
           );
         }
 
-        return product;
-      });
-
-      const saleItems = requestedProducts.map((product) => {
-        const quantity = quantities.get(product.id)!;
+        const quantity = new Prisma.Decimal(String(request.quantity));
         const unitPrice = new Prisma.Decimal(product.salePrice);
         const itemTotal = unitPrice.mul(quantity);
+        const selections = request.selections ?? [];
+
+        if (product.type === "FRACTIONAL" && request.quantity !== 1) {
+          throw new Error(
+            `Cada unidade de ${product.name} precisa ter suas próprias escolhas.`,
+          );
+        }
+
+        if (product.type !== "FRACTIONAL" && selections.length > 0) {
+          throw new Error(
+            `O produto ${product.name} não aceita escolhas de composição.`,
+          );
+        }
+
+        const compositionSelections =
+          product.type === "FRACTIONAL"
+            ? selections.map((selection) => {
+              const group = product.composition?.groups.find(
+                (item) => item.id === selection.groupId,
+              );
+
+              const option = group?.options.find(
+                (item) => item.id === selection.optionId,
+              );
+
+              if (!group || !option) {
+                throw new Error(
+                  `Escolha inválida na composição de ${product.name}.`,
+                );
+              }
+
+              return {
+                groupName: group.name,
+                optionName: option.stockItem.name,
+                stockItemId: option.stockItemId,
+                stockItemName: option.stockItem.name,
+                quantity: option.quantity,
+                unit: option.stockItem.unit,
+              };
+            })
+            : [];
 
         return {
           product,
           quantity,
           unitPrice,
           itemTotal,
+          selections,
+          compositionSelections,
         };
       });
 
       let total = new Prisma.Decimal(0);
 
       for (const item of saleItems) {
-        total = total.plus(item.itemTotal);
+        consumeProduct(
+          item.product,
+          item.quantity,
+          item.selections,
+        );
       }
 
       const consumptions: Consumption[] = [];
@@ -155,6 +241,7 @@ export async function finalizeSale(
       function consumeProduct(
         product: (typeof products)[number],
         quantity: Prisma.Decimal,
+        selections: SelectedCompositionOption[] = [],
       ) {
         if (product.type === "COMBO") {
           if (product.comboItems.length === 0) {
@@ -168,8 +255,12 @@ export async function finalizeSale(
             const componentQuantity = quantity.mul(comboItem.quantity);
 
             if (component.type === "COMBO") {
+              throw new Error("Combos aninhados ainda não são suportados.");
+            }
+
+            if (component.type === "FRACTIONAL" && component.composition) {
               throw new Error(
-                `O combo ${product.name} contém outro combo. Combos aninhados ainda não são suportados.`,
+                `O componente ${component.name} precisa de escolhas individuais. Essa configuração ainda não é suportada em combos.`,
               );
             }
 
@@ -179,14 +270,59 @@ export async function finalizeSale(
           return;
         }
 
-        if (product.recipeItems.length > 0) {
-          for (const recipeItem of product.recipeItems) {
+        if (product.type === "FRACTIONAL") {
+          if (!product.composition) {
+            throw new Error(
+              `O produto ${product.name} não possui composição cadastrada.`,
+            );
+          }
+
+          const selectedOptions = product.composition.groups.flatMap((group) => {
+            const groupSelections = selections.filter(
+              (selection) => selection.groupId === group.id,
+            );
+
+            if (groupSelections.length < group.minSelections) {
+              throw new Error(
+                `Selecione uma opção para o grupo ${group.name} do produto ${product.name}.`,
+              );
+            }
+
+            if (groupSelections.length > group.maxSelections) {
+              throw new Error(
+                `O grupo ${group.name} possui opções demais selecionadas.`,
+              );
+            }
+
+            return groupSelections.map((selection) => {
+              const option = group.options.find(
+                (item) => item.id === selection.optionId,
+              );
+
+              if (!option) {
+                throw new Error(
+                  `Opção inválida no grupo ${group.name}.`,
+                );
+              }
+
+              return {
+                group,
+                option,
+              };
+            });
+          });
+
+          if (selections.length !== selectedOptions.length) {
+            throw new Error("Uma ou mais escolhas não pertencem à composição.");
+          }
+
+          for (const { option } of selectedOptions) {
             addConsumption(
-              recipeItem.stockItemId,
+              option.stockItemId,
               null,
-              quantity.mul(recipeItem.quantity),
-              recipeItem.stockItem.unit,
-              recipeItem.stockItem.name,
+              quantity.mul(option.quantity),
+              option.stockItem.unit,
+              option.stockItem.name,
             );
           }
 
@@ -226,18 +362,10 @@ export async function finalizeSale(
         component: (typeof products)[number]["comboItems"][number]["componentProduct"],
         quantity: Prisma.Decimal,
       ) {
-        if (component.recipeItems.length > 0) {
-          for (const recipeItem of component.recipeItems) {
-            addConsumption(
-              recipeItem.stockItemId,
-              null,
-              quantity.mul(recipeItem.quantity),
-              recipeItem.stockItem.unit,
-              recipeItem.stockItem.name,
-            );
-          }
-
-          return;
+        if (component.type === "FRACTIONAL" && component.composition) {
+          throw new Error(
+            `O componente ${component.name} precisa de escolhas individuais. Essa configuração ainda não é suportada em combos.`,
+          );
         }
 
         if (component.stockPackagingId && component.stockItem) {
@@ -273,7 +401,6 @@ export async function finalizeSale(
         consumeProduct(item.product, item.quantity);
       }
 
-      // Agrupa consumos repetidos do mesmo item de estoque.
       const groupedConsumptions = new Map<string, Consumption>();
 
       for (const consumption of consumptions) {
@@ -291,7 +418,6 @@ export async function finalizeSale(
 
       const finalConsumptions = Array.from(groupedConsumptions.values());
 
-      // Verifica e desconta os saldos dentro da transação.
       for (const consumption of finalConsumptions) {
         if (consumption.stockPackagingId) {
           const updated = await tx.stockPackagingBalance.updateMany({
@@ -349,6 +475,13 @@ export async function finalizeSale(
               quantity: item.quantity,
               unitPrice: item.unitPrice,
               total: item.itemTotal,
+
+              compositionSelections:
+                item.compositionSelections.length > 0
+                  ? {
+                    create: item.compositionSelections,
+                  }
+                  : undefined,
             })),
           },
         },

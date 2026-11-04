@@ -31,33 +31,48 @@ function getDirectStock(
   return Number(stockItem?.balance?.quantity.toString() ?? 0);
 }
 
-function getRecipeAvailability(
-  recipeItems: {
-    quantity: { toString(): string };
-    stockItem: {
-      balance: { quantity: { toString(): string } } | null;
-    };
+function getOptionAvailability(option: {
+  quantity: { toString(): string };
+  stockItem: {
+    balance: { quantity: { toString(): string } } | null;
+  };
+}) {
+  const required = Number(option.quantity.toString());
+  const available = Number(
+    option.stockItem.balance?.quantity.toString() ?? 0,
+  );
+
+  if (required <= 0) return 0;
+
+  return Math.max(0, Math.floor(available / required));
+}
+
+function getCompositionAvailability(
+  groups: {
+    minSelections: number;
+    options: {
+      quantity: { toString(): string };
+      stockItem: {
+        balance: { quantity: { toString(): string } } | null;
+      };
+    }[];
   }[],
 ) {
-  if (recipeItems.length === 0) return 0;
-
-  return Math.max(
-    0,
-    Math.floor(
-      Math.min(
-        ...recipeItems.map((item) => {
-          const required = Number(item.quantity.toString());
-          const available = Number(
-            item.stockItem.balance?.quantity.toString() ?? 0,
-          );
-
-          if (required <= 0) return 0;
-
-          return available / required;
-        }),
-      ),
-    ),
+  const requiredGroups = groups.filter(
+    (group) => group.minSelections > 0,
   );
+
+  if (requiredGroups.length === 0) return 0;
+
+  const groupAvailabilities = requiredGroups.map((group) => {
+    if (group.options.length === 0) return 0;
+
+    return Math.max(
+      ...group.options.map(getOptionAvailability),
+    );
+  });
+
+  return Math.min(...groupAvailabilities);
 }
 
 export default function PosPage() {
@@ -95,11 +110,25 @@ async function PosContent() {
           balance: true,
         },
       },
-      recipeItems: {
+      composition: {
         include: {
-          stockItem: {
+          groups: {
+            orderBy: {
+              position: "asc",
+            },
             include: {
-              balance: true,
+              options: {
+                orderBy: {
+                  position: "asc",
+                },
+                include: {
+                  stockItem: {
+                    include: {
+                      balance: true,
+                    },
+                  },
+                },
+              },
             },
           },
         },
@@ -118,11 +147,25 @@ async function PosContent() {
                   balance: true,
                 },
               },
-              recipeItems: {
+              composition: {
                 include: {
-                  stockItem: {
+                  groups: {
+                    orderBy: {
+                      position: "asc",
+                    },
                     include: {
-                      balance: true,
+                      options: {
+                        orderBy: {
+                          position: "asc",
+                        },
+                        include: {
+                          stockItem: {
+                            include: {
+                              balance: true,
+                            },
+                          },
+                        },
+                      },
                     },
                   },
                 },
@@ -141,7 +184,9 @@ async function PosContent() {
     let stock = 0;
 
     if (product.type === "FRACTIONAL") {
-      stock = getRecipeAvailability(product.recipeItems);
+      stock = getCompositionAvailability(
+        product.composition?.groups ?? [],
+      );
     } else if (product.type === "COMBO") {
       if (product.comboItems.length > 0) {
         stock = Math.max(
@@ -154,9 +199,13 @@ async function PosContent() {
 
                 if (required <= 0) return 0;
 
+                if (component.type === "COMBO") return 0;
+
                 const available =
                   component.type === "FRACTIONAL"
-                    ? getRecipeAvailability(component.recipeItems)
+                    ? getCompositionAvailability(
+                        component.composition?.groups ?? [],
+                      )
                     : getDirectStock(
                         component.stockItem,
                         component.stockPackaging,
@@ -183,6 +232,24 @@ async function PosContent() {
       salePrice: product.salePrice.toString(),
       unit: "UNIT",
       stock: String(stock),
+
+      composition: product.composition
+        ? {
+            groups: product.composition.groups.map((group) => ({
+              id: group.id,
+              name: group.name,
+              required: group.minSelections > 0,
+              options: group.options.map((option) => ({
+                id: option.id,
+                stockItemId: option.stockItemId,
+                name: option.stockItem.name,
+                unit: option.stockItem.unit,
+                quantity: option.quantity.toString(),
+                available: String(getOptionAvailability(option)),
+              })),
+            })),
+          }
+        : null,
     };
   });
 

@@ -4,6 +4,22 @@
 import { useMemo, useState, useTransition } from "react";
 import { finalizeSale } from "./actions";
 
+type CompositionOption = {
+  id: string;
+  stockItemId: string;
+  name: string;
+  unit: string;
+  quantity: string;
+  available: string;
+};
+
+type CompositionGroup = {
+  id: string;
+  name: string;
+  required: boolean;
+  options: CompositionOption[];
+};
+
 type Product = {
   id: string;
   code: string;
@@ -12,11 +28,19 @@ type Product = {
   salePrice: string;
   unit: string;
   stock: string;
+  composition: {
+    groups: CompositionGroup[];
+  } | null;
 };
 
 type CartItem = {
+  id: string;
   product: Product;
   quantity: number;
+  selections: {
+    groupId: string;
+    optionId: string;
+  }[];
 };
 
 const currency = new Intl.NumberFormat("pt-BR", {
@@ -63,6 +87,26 @@ export default function PosClient({
     0,
   );
 
+  const hasIncompleteComposition = cart.some((item) => {
+    if (item.product.type !== "FRACTIONAL") return false;
+
+    if (!item.product.composition) return true;
+
+    return item.product.composition.groups.some((group) => {
+      if (!group.required) return false;
+
+      return !item.selections.some(
+        (selection) =>
+          selection.groupId === group.id &&
+          group.options.some(
+            (option) =>
+              option.id === selection.optionId &&
+              Number(option.available) > 0,
+          ),
+      );
+    });
+  });
+
   function addProduct(product: Product) {
     if (Number(product.stock) <= 0) {
       setMessage("Este produto está sem estoque suficiente.");
@@ -72,34 +116,54 @@ export default function PosClient({
     setMessage("");
 
     setCart((current) => {
+      if (product.type === "FRACTIONAL") {
+        return [
+          ...current,
+          {
+            id: crypto.randomUUID(),
+            product,
+            quantity: 1,
+            selections: [],
+          },
+        ];
+      }
+
       const existing = current.find(
         (item) => item.product.id === product.id,
       );
 
       if (existing) {
         return current.map((item) =>
-          item.product.id === product.id
+          item.id === existing.id
             ? {
-                ...item,
-                quantity: Math.min(
-                  item.quantity + 1,
-                  Number(product.stock),
-                ),
-              }
+              ...item,
+              quantity: Math.min(
+                item.quantity + 1,
+                Number(product.stock),
+              ),
+            }
             : item,
         );
       }
 
-      return [...current, { product, quantity: 1 }];
+      return [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          product,
+          quantity: 1,
+          selections: [],
+        },
+      ];
     });
   }
 
-  function changeQuantity(productId: string, quantity: number) {
+  function changeQuantity(cartItemId: string, quantity: number) {
     const item = cart.find(
-      (cartItem) => cartItem.product.id === productId,
+      (cartItem) => cartItem.id === cartItemId,
     );
 
-    if (!item) return;
+    if (!item || item.product.type === "FRACTIONAL") return;
 
     const safeQuantity = Math.min(
       Number(item.product.stock),
@@ -108,20 +172,43 @@ export default function PosClient({
 
     setCart((current) =>
       safeQuantity === 0
-        ? current.filter(
-            (cartItem) => cartItem.product.id !== productId,
-          )
+        ? current.filter((cartItem) => cartItem.id !== cartItemId)
         : current.map((cartItem) =>
-            cartItem.product.id === productId
-              ? { ...cartItem, quantity: safeQuantity }
-              : cartItem,
-          ),
+          cartItem.id === cartItemId
+            ? { ...cartItem, quantity: safeQuantity }
+            : cartItem,
+        ),
     );
   }
 
-  function removeProduct(productId: string) {
+  function removeProduct(cartItemId: string) {
     setCart((current) =>
-      current.filter((item) => item.product.id !== productId),
+      current.filter((item) => item.id !== cartItemId),
+    );
+  }
+
+  function selectCompositionOption(
+    cartItemId: string,
+    groupId: string,
+    optionId: string,
+  ) {
+    setCart((current) =>
+      current.map((item) => {
+        if (item.id !== cartItemId) return item;
+
+        const selections = item.selections.filter(
+          (selection) => selection.groupId !== groupId,
+        );
+
+        if (optionId) {
+          selections.push({ groupId, optionId });
+        }
+
+        return {
+          ...item,
+          selections,
+        };
+      }),
     );
   }
 
@@ -136,11 +223,19 @@ export default function PosClient({
           cart.map((item) => ({
             productId: item.product.id,
             quantity: item.quantity,
+            selections: item.selections,
           })),
         );
 
         if (!result.success) {
           setMessage(result.error);
+          return;
+        }
+
+        if ("confirmationRequired" in result) {
+          setMessage(
+            "É necessário confirmar a abertura de garrafas antes de concluir a venda.",
+          );
           return;
         }
 
@@ -250,13 +345,18 @@ export default function PosClient({
 
             {cart.map((item) => (
               <div
-                key={item.product.id}
+                key={item.id}
                 className="border-b border-gray-100 pb-4"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="font-medium text-gray-900">
                       {item.product.name}
+                      {item.product.type === "FRACTIONAL" && (
+                        <span className="ml-2 text-xs text-gray-500">
+                          Unidade individual
+                        </span>
+                      )}
                     </p>
 
                     <p className="text-xs text-gray-500">
@@ -264,64 +364,129 @@ export default function PosClient({
                     </p>
 
                     <p className="text-sm text-gray-500">
-                      {currency.format(
-                        Number(item.product.salePrice),
-                      )}
+                      {currency.format(Number(item.product.salePrice))}
                     </p>
                   </div>
 
                   <button
                     type="button"
-                    onClick={() => removeProduct(item.product.id)}
+                    onClick={() => removeProduct(item.id)}
                     className="text-sm text-red-600 hover:underline"
                   >
                     Remover
                   </button>
                 </div>
 
-                <div className="mt-3 flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      changeQuantity(
-                        item.product.id,
-                        item.quantity - 1,
-                      )
-                    }
-                    className="h-8 w-8 rounded border border-gray-300"
-                    aria-label="Diminuir quantidade"
-                  >
-                    −
-                  </button>
+                {item.product.type === "FRACTIONAL" ? (
+                  <div className="mt-3 space-y-3">
+                    {item.product.composition?.groups.map((group) => {
+                      const selectedOption = item.selections.find(
+                        (selection) => selection.groupId === group.id,
+                      );
 
-                  <span className="min-w-8 text-center font-medium">
-                    {item.quantity}
-                  </span>
+                      const availableOptions = group.options.filter(
+                        (option) => Number(option.available) > 0,
+                      );
 
-                  <button
-                    type="button"
-                    onClick={() =>
-                      changeQuantity(
-                        item.product.id,
-                        item.quantity + 1,
-                      )
-                    }
-                    disabled={
-                      item.quantity >= Number(item.product.stock)
-                    }
-                    className="h-8 w-8 rounded border border-gray-300 disabled:opacity-40"
-                    aria-label="Aumentar quantidade"
-                  >
-                    +
-                  </button>
+                      return (
+                        <div key={group.id}>
+                          <label
+                            htmlFor={`${item.id}-${group.id}`}
+                            className="mb-1 block text-sm font-medium text-gray-700"
+                          >
+                            {group.name}
+                            {group.required ? " *" : " (opcional)"}
+                          </label>
 
-                  <span className="ml-auto font-semibold">
-                    {currency.format(
-                      Number(item.product.salePrice) *
-                        item.quantity,
+                          <select
+                            id={`${item.id}-${group.id}`}
+                            value={selectedOption?.optionId ?? ""}
+                            onChange={(event) =>
+                              selectCompositionOption(
+                                item.id,
+                                group.id,
+                                event.target.value,
+                              )
+                            }
+                            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500"
+                          >
+                            <option value="">
+                              {group.required
+                                ? "Selecione uma opção..."
+                                : "Não adicionar"}
+                            </option>
+
+                            {availableOptions.map((option) => (
+                              <option key={option.id} value={option.id}>
+                                {option.name} — {option.quantity}{" "}
+                                {option.unit}
+                              </option>
+                            ))}
+                          </select>
+
+                          {group.required && availableOptions.length === 0 && (
+                            <p className="mt-1 text-xs text-red-600">
+                              Nenhuma opção disponível em estoque.
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {!item.product.composition && (
+                      <p className="text-sm text-red-600">
+                        Este produto não possui composição cadastrada.
+                      </p>
                     )}
-                  </span>
-                </div>
+
+                    <div className="flex justify-between pt-2">
+                      <span className="text-sm text-gray-500">
+                        Quantidade: 1 dose
+                      </span>
+
+                      <span className="font-semibold">
+                        {currency.format(Number(item.product.salePrice))}
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-3 flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        changeQuantity(item.id, item.quantity - 1)
+                      }
+                      className="h-8 w-8 rounded border border-gray-300"
+                      aria-label="Diminuir quantidade"
+                    >
+                      −
+                    </button>
+
+                    <span className="min-w-8 text-center font-medium">
+                      {item.quantity}
+                    </span>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        changeQuantity(item.id, item.quantity + 1)
+                      }
+                      disabled={
+                        item.quantity >= Number(item.product.stock)
+                      }
+                      className="h-8 w-8 rounded border border-gray-300 disabled:opacity-40"
+                      aria-label="Aumentar quantidade"
+                    >
+                      +
+                    </button>
+
+                    <span className="ml-auto font-semibold">
+                      {currency.format(
+                        Number(item.product.salePrice) * item.quantity,
+                      )}
+                    </span>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -341,10 +506,16 @@ export default function PosClient({
             ou conforme o meio utilizado pela adega.
           </p>
 
+          {hasIncompleteComposition && (
+            <p className="mt-3 text-sm text-amber-700">
+              Configure todas as opções obrigatórias das doses antes de finalizar.
+            </p>
+          )}
+
           <button
             type="button"
             onClick={handleFinalize}
-            disabled={cart.length === 0 || isPending}
+            disabled={cart.length === 0 || isPending || hasIncompleteComposition}
             className="mt-5 w-full rounded-lg bg-blue-600 px-4 py-3 font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isPending ? "Registrando venda..." : "Finalizar venda"}

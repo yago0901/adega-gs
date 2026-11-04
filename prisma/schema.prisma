@@ -164,12 +164,12 @@ model Product {
   stockPackagingId String?
   stockPackaging   StockPackaging? @relation(fields: [stockPackagingId], references: [id])
 
-  packagingChildProductId String?
+  packagingChildProductId String? @unique
   packagingChildProduct   Product?  @relation("ProductPackagingChild", fields: [packagingChildProductId], references: [id], onDelete: Restrict)
   packagingParentProducts Product[] @relation("ProductPackagingChild")
   packagingChildQuantity  Decimal?  @db.Decimal(12, 3)
 
-  recipeItems      ProductRecipeItem[] @relation("RecipeProduct")
+  composition ProductComposition?
   comboItems       ComboItem[]         @relation("ComboProduct")
   includedInCombos ComboItem[]         @relation("ComponentProduct")
   saleItems        SaleItem[]
@@ -194,7 +194,7 @@ model StockItem {
   balance    StockBalance?
   packagings StockPackaging[]
   products   Product[]
-  recipeUses ProductRecipeItem[]
+  compositionOptions CompositionOption[]
   movements  StockMovement[]
 
   @@index([name])
@@ -235,17 +235,45 @@ model StockPackagingBalance {
   stockPackaging   StockPackaging @relation(fields: [stockPackagingId], references: [id], onDelete: Cascade)
 }
 
-model ProductRecipeItem {
+model ProductComposition {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  productId String  @unique
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  groups CompositionGroup[]
+}
+
+model CompositionGroup {
+  id            String @id @default(cuid())
+  name          String
+  minSelections Int    @default(1)
+  maxSelections Int    @default(1)
+  position      Int    @default(0)
+
+  compositionId String
+  composition   ProductComposition @relation(fields: [compositionId], references: [id], onDelete: Cascade)
+
+  options CompositionOption[]
+
+  @@index([compositionId])
+}
+
+model CompositionOption {
   id       String  @id @default(cuid())
   quantity Decimal @db.Decimal(12, 3)
+  position Int     @default(0)
 
-  productId String
-  product   Product @relation("RecipeProduct", fields: [productId], references: [id], onDelete: Cascade)
+  groupId String
+  group   CompositionGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
 
   stockItemId String
   stockItem   StockItem @relation(fields: [stockItemId], references: [id])
 
-  @@unique([productId, stockItemId])
+  @@unique([groupId, stockItemId])
+  @@index([stockItemId])
 }
 
 model ComboItem {
@@ -318,6 +346,8 @@ model SaleItem {
   unitPrice   Decimal   @db.Decimal(12, 2)
   total       Decimal   @db.Decimal(12, 2)
 
+  compositionSelections SaleItemCompositionSelection[]
+
   saleId String
   sale   Sale   @relation(fields: [saleId], references: [id], onDelete: Restrict)
 
@@ -326,4 +356,22 @@ model SaleItem {
 
   @@index([saleId])
   @@index([productId])
+}
+
+model SaleItemCompositionSelection {
+  id String @id @default(cuid())
+
+  groupName     String
+  optionName    String
+  stockItemId   String
+  stockItemName String
+
+  quantity Decimal   @db.Decimal(12, 3)
+  unit     StockUnit
+
+  saleItemId String
+  saleItem   SaleItem @relation(fields: [saleItemId], references: [id], onDelete: Cascade)
+
+  @@index([saleItemId])
+  @@index([stockItemId])
 }

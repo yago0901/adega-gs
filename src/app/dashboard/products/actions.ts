@@ -49,6 +49,117 @@ function parseRepeatedNumber(value: string, field: string) {
   return number;
 }
 
+
+type CompositionGroupInput = {
+  name: string;
+  minSelections: number;
+  maxSelections: 1;
+  position: number;
+  options: {
+    stockItemId: string;
+    quantity: number;
+    position: number;
+  }[];
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function parseCompositionGroups(
+  formData: FormData,
+): CompositionGroupInput[] {
+  const raw = getText(formData, "compositionGroups");
+
+  if (!raw) {
+    throw new Error("Configure a ficha técnica da dose.");
+  }
+
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("A ficha técnica contém dados inválidos.");
+  }
+
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error("Adicione pelo menos um grupo à ficha técnica.");
+  }
+
+  return parsed.map((value, groupIndex) => {
+    if (!isRecord(value)) {
+      throw new Error(`Grupo ${groupIndex + 1} inválido.`);
+    }
+
+    const name = value.name;
+    const minSelections = Number(value.minSelections);
+    const rawOptions = value.options;
+
+    if (
+      typeof name !== "string" ||
+      !name.trim() ||
+      !Array.isArray(rawOptions) ||
+      rawOptions.length === 0
+    ) {
+      throw new Error(
+        `Configure corretamente o grupo ${groupIndex + 1}.`,
+      );
+    }
+
+    if (![0, 1].includes(minSelections)) {
+      throw new Error("Configuração de grupo inválida.");
+    }
+
+    const options = rawOptions.map((rawOption, optionIndex) => {
+      if (!isRecord(rawOption)) {
+        throw new Error(`Opção inválida no grupo "${name}".`);
+      }
+
+      const stockItemId = rawOption.stockItemId;
+      const quantity = Number(rawOption.quantity);
+
+      if (
+        typeof stockItemId !== "string" ||
+        !stockItemId.trim()
+      ) {
+        throw new Error(
+          `Selecione um ingrediente no grupo "${name}".`,
+        );
+      }
+
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        throw new Error(
+          `Informe uma quantidade válida no grupo "${name}".`,
+        );
+      }
+
+      return {
+        stockItemId,
+        quantity,
+        position: optionIndex,
+      };
+    });
+
+    if (
+      new Set(options.map((option) => option.stockItemId)).size !==
+      options.length
+    ) {
+      throw new Error(
+        `O mesmo ingrediente não pode aparecer duas vezes no grupo "${name}".`,
+      );
+    }
+
+    return {
+      name: name.trim(),
+      minSelections,
+      maxSelections: 1 as const,
+      position: groupIndex,
+      options,
+    };
+  });
+}
+
 const validTypes = [
   "STANDARD",
   "SUPPLY",
@@ -102,7 +213,10 @@ export async function createProduct(formData: FormData) {
 
   const type = getText(formData, "type");
 
+  const packagingMode = getText(formData, "packagingMode") || "NONE";
+
   const salePrice = getNumber(formData, "salePrice");
+
   const purchaseCost = getNumber(formData, "purchaseCost");
 
   if (!code || !name || !categoryId) {
@@ -131,38 +245,19 @@ export async function createProduct(formData: FormData) {
       throw new Error("Doses e combos não possuem estoque próprio.");
     }
 
-    const recipeIds = getRepeatedTexts(
-      formData,
-      "recipeStockItemId",
-    );
-    const recipeQuantities = getRepeatedTexts(
-      formData,
-      "recipeQuantity",
-    );
+    const compositionGroups = isRecipe
+      ? parseCompositionGroups(formData)
+      : [];
 
     const comboIds = getRepeatedTexts(
       formData,
       "comboProductId",
     );
+
     const comboQuantities = getRepeatedTexts(
       formData,
       "comboQuantity",
     );
-
-    if (isRecipe) {
-      if (
-        recipeIds.length === 0 ||
-        recipeIds.length !== recipeQuantities.length
-      ) {
-        throw new Error("Adicione pelo menos um ingrediente à dose.");
-      }
-
-      if (new Set(recipeIds).size !== recipeIds.length) {
-        throw new Error(
-          "O mesmo ingrediente não pode aparecer duas vezes na receita. Some as quantidades em uma única linha.",
-        );
-      }
-    }
 
     if (isCombo) {
       if (
@@ -178,16 +273,6 @@ export async function createProduct(formData: FormData) {
         );
       }
     }
-
-    const recipeItems = isRecipe
-      ? recipeIds.map((stockItemId, index) => ({
-        stockItemId,
-        quantity: parseRepeatedNumber(
-          recipeQuantities[index],
-          "ingrediente",
-        ),
-      }))
-      : [];
 
     const comboItems = isCombo
       ? comboIds.map((componentProductId, index) => ({
@@ -209,15 +294,23 @@ export async function createProduct(formData: FormData) {
       }
 
       if (isRecipe) {
+        const stockItemIds = [
+          ...new Set(
+            compositionGroups.flatMap((group) =>
+              group.options.map((option) => option.stockItemId),
+            ),
+          ),
+        ];
+
         const ingredients = await tx.stockItem.findMany({
           where: {
-            id: { in: recipeItems.map((item) => item.stockItemId) },
+            id: { in: stockItemIds },
             active: true,
           },
           select: { id: true },
         });
 
-        if (ingredients.length !== recipeItems.length) {
+        if (ingredients.length !== stockItemIds.length) {
           throw new Error(
             "Um ou mais ingredientes não existem ou estão inativos.",
           );
@@ -232,8 +325,20 @@ export async function createProduct(formData: FormData) {
             type: "FRACTIONAL",
             salePrice,
             categoryId,
-            recipeItems: {
-              create: recipeItems,
+            composition: {
+              create: {
+                groups: {
+                  create: compositionGroups.map((group) => ({
+                    name: group.name,
+                    minSelections: group.minSelections,
+                    maxSelections: group.maxSelections,
+                    position: group.position,
+                    options: {
+                      create: group.options,
+                    },
+                  })),
+                },
+              },
             },
           },
         });
@@ -242,7 +347,11 @@ export async function createProduct(formData: FormData) {
       if (isCombo) {
         const components = await tx.product.findMany({
           where: {
-            id: { in: comboItems.map((item) => item.componentProductId) },
+            id: {
+              in: comboItems.map(
+                (item) => item.componentProductId,
+              ),
+            },
             active: true,
             type: { in: ["STANDARD", "SUPPLY"] },
             stockItemId: { not: null },
@@ -293,15 +402,12 @@ export async function createProduct(formData: FormData) {
     "initialOpenQuantity",
   );
 
-  const packagingMode = getText(formData, "packagingMode") || "NONE";
-
   if (!["NONE", "SELF", "CHILD"].includes(packagingMode)) {
     throw new Error("Tipo de embalagem inválido.");
   }
 
   const hasSelfPackaging = packagingMode === "SELF";
   const hasChildPackaging = packagingMode === "CHILD";
-  const hasPackaging = hasSelfPackaging || hasChildPackaging;
 
   const packagingName = getText(formData, "packagingName");
 
@@ -317,10 +423,32 @@ export async function createProduct(formData: FormData) {
     ? getOptionalNumber(formData, "packagingChildQuantity")
     : null;
 
+  const packagingParentProductId = hasChildPackaging
+    ? getText(formData, "packagingParentProductId")
+    : "";
+
+  const packagingParentQuantity = packagingParentProductId
+    ? getOptionalNumber(formData, "packagingParentQuantity")
+    : null;
+
   if (hasSelfPackaging) {
     if (!packagingName || packagingConversionFactor === null) {
       throw new Error(
         "Informe o nome e a quantidade por embalagem.",
+      );
+    }
+  }
+
+  if (packagingParentProductId) {
+    if (hasSelfPackaging || unit !== "UNIT") {
+      throw new Error(
+        "Um produto originado de outra embalagem precisa utilizar estoque em unidades.",
+      );
+    }
+
+    if (packagingParentQuantity === null) {
+      throw new Error(
+        "Informe a quantidade gerada pela embalagem de origem.",
       );
     }
   }
@@ -375,7 +503,9 @@ export async function createProduct(formData: FormData) {
             },
           },
           stockPackagingId: null,
-          packagingChildProductId: null,
+          packagingParentProducts: {
+            none: {},
+          },
         },
         select: {
           id: true,
@@ -385,7 +515,37 @@ export async function createProduct(formData: FormData) {
 
       if (!childProduct) {
         throw new Error(
-          "O produto filho precisa ser um produto comum ativo, com estoque próprio em unidades e sem embalagem de conversão.",
+          "O produto filho precisa estar ativo, possuir estoque próprio em unidades e não ter outro produto de origem.",
+        );
+      }
+    }
+
+    let parentProduct = null;
+
+    if (packagingParentProductId) {
+      parentProduct = await tx.product.findFirst({
+        where: {
+          id: packagingParentProductId,
+          active: true,
+          type: { in: ["STANDARD", "SUPPLY"] },
+          stockItem: {
+            is: {
+              active: true,
+              unit: "UNIT",
+            },
+          },
+          stockPackagingId: null,
+          packagingChildProductId: null,
+        },
+        select: {
+          id: true,
+          name: true,
+        },
+      });
+
+      if (!parentProduct) {
+        throw new Error(
+          "O produto de origem não está disponível ou já possui outro produto vinculado.",
         );
       }
     }
@@ -431,7 +591,7 @@ export async function createProduct(formData: FormData) {
       stockPackagingId = packaging.id;
     }
 
-    await tx.product.create({
+    const newProduct = await tx.product.create({
       data: {
         code,
         barcode,
@@ -450,6 +610,18 @@ export async function createProduct(formData: FormData) {
           : {}),
       },
     });
+
+    if (parentProduct) {
+      await tx.product.update({
+        where: {
+          id: parentProduct.id,
+        },
+        data: {
+          packagingChildProductId: newProduct.id,
+          packagingChildQuantity: packagingParentQuantity!,
+        },
+      });
+    }
 
     if (hasSelfPackaging && initialStock > 0) {
       await tx.stockMovement.create({
@@ -508,7 +680,6 @@ export async function createProduct(formData: FormData) {
   redirect("/dashboard/products");
 }
 
-
 export async function updateProduct(
   id: string,
   formData: FormData,
@@ -522,7 +693,27 @@ export async function updateProduct(
   const categoryId = getText(formData, "categoryId");
   const type = getText(formData, "type");
 
+  const packagingMode = getText(formData, "packagingMode") || "NONE";
+
   const salePrice = getNumber(formData, "salePrice");
+
+  const packagingParentProductId =
+    packagingMode === "CHILD"
+      ? getText(formData, "packagingParentProductId")
+      : "";
+
+  const packagingParentQuantity = packagingParentProductId
+    ? getOptionalNumber(formData, "packagingParentQuantity")
+    : null;
+
+  const packagingChildProductId =
+    packagingMode === "CHILD"
+      ? getText(formData, "packagingChildProductId")
+      : "";
+
+  const packagingChildQuantity = packagingChildProductId
+    ? getOptionalNumber(formData, "packagingChildQuantity")
+    : null;
 
   if (!code || !name || !categoryId) {
     throw new Error("Preencha código, nome e categoria.");
@@ -539,10 +730,29 @@ export async function updateProduct(
       tx.product.findUnique({
         where: { id },
         include: {
-          recipeItems: true,
+          composition: {
+            include: {
+              groups: {
+                include: {
+                  options: true,
+                },
+              },
+            },
+          },
           comboItems: true,
           stockItem: true,
           stockPackaging: true,
+          packagingChildProduct: {
+            select: {
+              id: true,
+            },
+          },
+          packagingParentProducts: {
+            select: {
+              id: true,
+              packagingChildQuantity: true,
+            },
+          },
         },
       }),
       tx.category.findUnique({
@@ -564,7 +774,203 @@ export async function updateProduct(
       );
     }
 
-    // Produtos com estoque próprio.
+    const isSelfPackaging = Boolean(currentProduct.stockPackaging);
+
+    if (!["NONE", "SELF", "CHILD"].includes(packagingMode)) {
+      throw new Error("Tipo de controle de embalagem inválido.");
+    }
+
+    if (isSelfPackaging && packagingMode !== "SELF") {
+      throw new Error(
+        "Este produto possui embalagem própria e não pode mudar de configuração por aqui.",
+      );
+    }
+
+    if (!isSelfPackaging && packagingMode === "SELF") {
+      throw new Error(
+        "Não é possível transformar um produto em embalagem própria por esta edição.",
+      );
+    }
+
+    // Só valida relacionamentos quando o modo for CHILD.
+    if (packagingMode === "CHILD") {
+      if (
+        currentProduct.type !== "STANDARD" &&
+        currentProduct.type !== "SUPPLY"
+      ) {
+        throw new Error(
+          "Somente produtos comuns podem ter relações de embalagem.",
+        );
+      }
+
+      if (
+        packagingParentProductId === id ||
+        packagingChildProductId === id
+      ) {
+        throw new Error(
+          "Um produto não pode ter relação de embalagem consigo mesmo.",
+        );
+      }
+
+      if (!packagingParentProductId && !packagingChildProductId) {
+        throw new Error(
+          "Informe um produto de origem ou um produto de destino para a embalagem.",
+        );
+      }
+
+      if (
+        packagingParentProductId &&
+        packagingParentQuantity === null
+      ) {
+        throw new Error(
+          "Informe a quantidade gerada pelo produto de origem.",
+        );
+      }
+
+      if (
+        packagingChildProductId &&
+        packagingChildQuantity === null
+      ) {
+        throw new Error(
+          "Informe a quantidade gerada ao abrir este produto.",
+        );
+      }
+
+      const relatedProductIds = [
+        packagingParentProductId,
+        packagingChildProductId,
+      ].filter((productId): productId is string => Boolean(productId));
+
+      const relatedProducts = await tx.product.findMany({
+        where: {
+          id: {
+            in: relatedProductIds,
+          },
+        },
+        select: {
+          id: true,
+          name: true,
+          type: true,
+        },
+      });
+
+      if (relatedProducts.length !== new Set(relatedProductIds).size) {
+        throw new Error(
+          "Um ou mais produtos relacionados não foram encontrados.",
+        );
+      }
+
+      const invalidProduct = relatedProducts.find(
+        (product) =>
+          product.type !== "STANDARD" &&
+          product.type !== "SUPPLY",
+      );
+
+      if (invalidProduct) {
+        throw new Error(
+          `O produto "${invalidProduct.name}" não pode participar de relações de embalagem.`,
+        );
+      }
+
+      if (packagingChildProductId) {
+        let currentChildId: string | null = packagingChildProductId;
+        const visitedProducts = new Set<string>();
+
+        while (currentChildId) {
+          if (currentChildId === id) {
+            throw new Error(
+              "Essa relação criaria um ciclo na cadeia de embalagens.",
+            );
+          }
+
+          if (visitedProducts.has(currentChildId)) {
+            throw new Error(
+              "Já existe um ciclo na cadeia de embalagens.",
+            );
+          }
+
+          visitedProducts.add(currentChildId);
+
+          const childProductResult: { packagingChildProductId: string | null } | null =
+            await tx.product.findUnique({
+              where: {
+                id: currentChildId,
+              },
+              select: {
+                packagingChildProductId: true,
+              },
+            });
+
+          currentChildId = childProductResult?.packagingChildProductId ?? null;
+
+        }
+      }
+    }
+
+    if (currentProduct.type === "FRACTIONAL") {
+      const compositionGroups = parseCompositionGroups(formData);
+
+      const stockItemIds = [
+        ...new Set(
+          compositionGroups.flatMap((group) =>
+            group.options.map((option) => option.stockItemId),
+          ),
+        ),
+      ];
+
+      const ingredients = await tx.stockItem.findMany({
+        where: {
+          id: { in: stockItemIds },
+          active: true,
+        },
+        select: { id: true },
+      });
+
+      if (ingredients.length !== stockItemIds.length) {
+        throw new Error(
+          "Um ou mais ingredientes não existem ou estão inativos.",
+        );
+      }
+
+      const groupsData = compositionGroups.map((group) => ({
+        name: group.name,
+        minSelections: group.minSelections,
+        maxSelections: group.maxSelections,
+        position: group.position,
+        options: {
+          create: group.options,
+        },
+      }));
+
+      if (currentProduct.composition) {
+        await tx.compositionGroup.deleteMany({
+          where: {
+            compositionId: currentProduct.composition.id,
+          },
+        });
+
+        await tx.productComposition.update({
+          where: {
+            id: currentProduct.composition.id,
+          },
+          data: {
+            groups: {
+              create: groupsData,
+            },
+          },
+        });
+      } else {
+        await tx.productComposition.create({
+          data: {
+            productId: id,
+            groups: {
+              create: groupsData,
+            },
+          },
+        });
+      }
+    }
+
     if (currentProduct.stockItem) {
       const unit = getText(formData, "unit");
       validateUnit(unit);
@@ -591,65 +997,6 @@ export async function updateProduct(
       });
     }
 
-    // Atualização dos ingredientes de uma dose.
-    if (currentProduct.type === "FRACTIONAL") {
-      const recipeIds = getRepeatedTexts(
-        formData,
-        "recipeStockItemId",
-      );
-
-      const recipeQuantities = getRepeatedTexts(
-        formData,
-        "recipeQuantity",
-      );
-
-      if (
-        recipeIds.length === 0 ||
-        recipeIds.length !== recipeQuantities.length
-      ) {
-        throw new Error("Adicione pelo menos um ingrediente à dose.");
-      }
-
-      if (new Set(recipeIds).size !== recipeIds.length) {
-        throw new Error(
-          "O mesmo ingrediente não pode aparecer duas vezes na receita.",
-        );
-      }
-
-      const recipeItems = recipeIds.map((stockItemId, index) => ({
-        stockItemId,
-        quantity: parseRepeatedNumber(
-          recipeQuantities[index],
-          "ingrediente",
-        ),
-      }));
-
-      const ingredients = await tx.stockItem.findMany({
-        where: {
-          id: { in: recipeItems.map((item) => item.stockItemId) },
-          active: true,
-        },
-        select: { id: true },
-      });
-
-      if (ingredients.length !== recipeItems.length) {
-        throw new Error(
-          "Um ou mais ingredientes não existem ou estão inativos.",
-        );
-      }
-
-      await tx.product.update({
-        where: { id },
-        data: {
-          recipeItems: {
-            deleteMany: {},
-            create: recipeItems,
-          },
-        },
-      });
-    }
-
-    // Atualização dos componentes de um combo.
     if (currentProduct.type === "COMBO") {
       const comboIds = getRepeatedTexts(
         formData,
@@ -713,6 +1060,94 @@ export async function updateProduct(
       });
     }
 
+    if (!isSelfPackaging) {
+      // Identifica os pais que atualmente apontam para este produto.
+      const currentParentIds = currentProduct.packagingParentProducts.map(
+        (parent) => parent.id,
+      );
+
+      // Verifica se o novo pai já possui outro filho.
+      if (packagingParentProductId) {
+        const selectedParent = await tx.product.findUnique({
+          where: {
+            id: packagingParentProductId,
+          },
+          select: {
+            id: true,
+            packagingChildProductId: true,
+          },
+        });
+
+        if (
+          selectedParent?.packagingChildProductId &&
+          selectedParent.packagingChildProductId !== id
+        ) {
+          throw new Error(
+            "O produto de origem já possui outro produto filho vinculado.",
+          );
+        }
+      }
+
+      if (packagingChildProductId) {
+        const existingChildParent = await tx.product.findFirst({
+          where: {
+            packagingChildProductId,
+          },
+          select: {
+            id: true,
+          },
+        });
+
+        if (
+          existingChildParent &&
+          existingChildParent.id !== id
+        ) {
+          throw new Error(
+            "Este produto já possui outro produto pai vinculado.",
+          );
+        }
+      }
+
+      if (currentParentIds.length > 0) {
+        await tx.product.updateMany({
+          where: {
+            id: {
+              in: currentParentIds,
+            },
+            packagingChildProductId: id,
+          },
+          data: {
+            packagingChildProductId: null,
+            packagingChildQuantity: null,
+          },
+        });
+      }
+
+      if (packagingParentProductId) {
+        await tx.product.update({
+          where: {
+            id: packagingParentProductId,
+          },
+          data: {
+            packagingChildProductId: id,
+            packagingChildQuantity: packagingParentQuantity,
+          },
+        });
+      }
+
+      await tx.product.update({
+        where: {
+          id,
+        },
+        data: {
+          packagingChildProductId: packagingChildProductId || null,
+          packagingChildQuantity: packagingChildProductId
+            ? packagingChildQuantity
+            : null,
+        },
+      });
+    }
+
     await tx.product.update({
       where: { id },
       data: {
@@ -735,7 +1170,6 @@ export async function updateProduct(
 
   redirect("/dashboard/products");
 }
-
 
 export async function deactivateProduct(id: string) {
   await requireModuleAccess("PRODUCTS");
