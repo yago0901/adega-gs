@@ -323,7 +323,7 @@ async function StockContent() {
                                 <input
                                   type="number"
                                   name="quantity"
-                                  min="1"
+                                  min="0"
                                   step="1"
                                   defaultValue="1"
                                   required

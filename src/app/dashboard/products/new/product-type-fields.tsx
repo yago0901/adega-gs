@@ -55,6 +55,7 @@ export function ProductTypeFields({
 
   const [packagingParentProductId, setPackagingParentProductId] = useState("");
   const [packagingParentQuantity, setPackagingParentQuantity] = useState("");
+  const [packagingChildProductId, setPackagingChildProductId] = useState("");
 
   const [compositionGroups, setCompositionGroups] = useState<
     CompositionGroupState[]
@@ -298,8 +299,8 @@ export function ProductTypeFields({
                   <input
                     name="packagingConversionFactor"
                     type="number"
-                    min="0.001"
-                    step="0.001"
+                    min="1"
+                    step="1"
                     required
                     placeholder="Ex.: 1000"
                     className="mt-2 w-full rounded-lg border border-slate-300 p-3"
@@ -348,8 +349,8 @@ export function ProductTypeFields({
                     <input
                       name="packagingParentQuantity"
                       type="number"
-                      min="0.001"
-                      step="0.001"
+                      min="1"
+                      step="1"
                       required
                       value={packagingParentQuantity}
                       onChange={(event) =>
@@ -384,15 +385,17 @@ export function ProductTypeFields({
                 </div>
 
                 <label className="block text-sm font-medium">
-                  Produto gerado pela embalagem *
+                  Produto gerado pela embalagem
                   <select
                     name="packagingChildProductId"
-                    required
-                    defaultValue=""
+                    value={packagingChildProductId}
+                    onChange={(event) =>
+                      setPackagingChildProductId(event.target.value)
+                    }
                     className="mt-2 w-full rounded-lg border border-slate-300 bg-white p-3"
                   >
-                    <option value="" disabled>
-                      Selecione o produto
+                    <option value="">
+                      Não gera outro produto
                     </option>
 
                     {packagingChildProducts.map((product) => (
@@ -403,18 +406,20 @@ export function ProductTypeFields({
                   </select>
                 </label>
 
-                <label className="block text-sm font-medium">
-                  Quantidade gerada ao abrir *
-                  <input
-                    name="packagingChildQuantity"
-                    type="number"
-                    min="0.001"
-                    step="0.001"
-                    required
-                    placeholder="Ex.: 12"
-                    className="mt-2 w-full rounded-lg border border-slate-300 p-3"
-                  />
-                </label>
+                {packagingChildProductId && (
+                  <label className="block text-sm font-medium">
+                    Quantidade gerada ao abrir *
+                    <input
+                      name="packagingChildQuantity"
+                      type="number"
+                      min="1"
+                      step="1"
+                      required
+                      placeholder="Ex.: 20"
+                      className="mt-2 w-full rounded-lg border border-slate-300 p-3"
+                    />
+                  </label>
+                )}
 
                 {packagingChildProducts.length === 0 && (
                   <p className="rounded-lg bg-amber-100 p-3 text-sm text-amber-900">
@@ -425,7 +430,7 @@ export function ProductTypeFields({
                 )}
 
                 <p className="text-xs text-emerald-800">
-                  Exemplo: 1 fardo gera 12 latas. Os dois produtos terão
+                  Exemplo: 1 pacote gera 20 maços. Os dois produtos terão
                   saldos independentes.
                 </p>
               </div>
@@ -448,7 +453,7 @@ export function ProductTypeFields({
                   name="minStock"
                   type="number"
                   min="0"
-                  step="0.001"
+                  step="1"
                   defaultValue="0"
                   className="mt-2 w-full rounded-lg border border-slate-300 p-3"
                 />
@@ -464,7 +469,7 @@ export function ProductTypeFields({
                   name="initialStock"
                   type="number"
                   min="0"
-                  step="0.001"
+                  step="1"
                   defaultValue="0"
                   className="mt-2 w-full rounded-lg border border-slate-300 p-3"
                 />
@@ -477,7 +482,7 @@ export function ProductTypeFields({
                     name="initialOpenQuantity"
                     type="number"
                     min="0"
-                    step="0.001"
+                    step="1"
                     defaultValue="0"
                     className="mt-2 w-full rounded-lg border border-slate-300 p-3"
                   />
@@ -703,8 +708,8 @@ export function ProductTypeFields({
                   <input
                     name="comboQuantity"
                     type="number"
-                    min="0.001"
-                    step="0.001"
+                    min="1"
+                    step="1"
                     required
                     defaultValue="1"
                     className="mt-2 w-full rounded-lg border border-slate-300 p-3"

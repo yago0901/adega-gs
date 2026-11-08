@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireModuleAccess } from "@/lib/permissions";
+import { openStockBottleInTransaction } from "../stock/open-stock-bottle";
 
 type SaleRequestItem = {
   productId: string;
@@ -16,6 +17,7 @@ type SaleRequestItem = {
 };
 
 type BottleOpening = {
+  productId: string;
   stockItemId: string;
   stockItemName: string;
   stockPackagingId: string;
@@ -26,7 +28,7 @@ type BottleOpening = {
 
 type SaleResult =
   | { success: true; saleId: string; total: string }
-  | { success: true; confirmationRequired: true; openings: BottleOpening[]; }
+  | { success: true; confirmationRequired: true; openings: BottleOpening[] }
   | { success: false; error: string };
 
 type Consumption = {
@@ -62,9 +64,8 @@ export async function finalizeSale(
         typeof item.productId !== "string" ||
         !item.productId ||
         typeof item.quantity !== "number" ||
-        !Number.isFinite(item.quantity) ||
-        item.quantity <= 0 ||
-        !/^\d+(\.\d{1,3})?$/.test(String(item.quantity))
+        !Number.isSafeInteger(item.quantity) ||
+        item.quantity <= 0
       ) {
         return {
           success: false,
@@ -97,15 +98,27 @@ export async function finalizeSale(
           active: true,
         },
         include: {
-          stockItem: true,
-          stockPackaging: true,
+          stockItem: {
+            include: {
+              balance: true,
+              packagings: {
+                include: {
+                  balance: true,
+                },
+              },
+            },
+          },
           composition: {
             include: {
               groups: {
                 include: {
                   options: {
                     include: {
-                      stockItem: true,
+                      stockItem: {
+                        include: {
+                          balance: true,
+                        },
+                      },
                     },
                   },
                 },
@@ -116,7 +129,16 @@ export async function finalizeSale(
             include: {
               componentProduct: {
                 include: {
-                  stockItem: true,
+                  stockItem: {
+                    include: {
+                      balance: true,
+                      packagings: {
+                        include: {
+                          balance: true,
+                        },
+                      },
+                    },
+                  },
                   stockPackaging: true,
                   composition: {
                     include: {
@@ -124,7 +146,11 @@ export async function finalizeSale(
                         include: {
                           options: {
                             include: {
-                              stockItem: true,
+                              stockItem: {
+                                include: {
+                                  balance: true,
+                                },
+                              },
                             },
                           },
                         },
@@ -206,15 +232,10 @@ export async function finalizeSale(
         };
       });
 
-      let total = new Prisma.Decimal(0);
-
-      for (const item of saleItems) {
-        consumeProduct(
-          item.product,
-          item.quantity,
-          item.selections,
-        );
-      }
+      const total = saleItems.reduce(
+        (sum, item) => sum.plus(item.itemTotal),
+        new Prisma.Decimal(0),
+      );
 
       const consumptions: Consumption[] = [];
 
@@ -398,7 +419,11 @@ export async function finalizeSale(
       }
 
       for (const item of saleItems) {
-        consumeProduct(item.product, item.quantity);
+        consumeProduct(
+          item.product,
+          item.quantity,
+          item.selections,
+        );
       }
 
       const groupedConsumptions = new Map<string, Consumption>();
@@ -417,6 +442,132 @@ export async function finalizeSale(
       }
 
       const finalConsumptions = Array.from(groupedConsumptions.values());
+      const openings: BottleOpening[] = [];
+
+      for (const consumption of finalConsumptions) {
+        if (consumption.stockPackagingId || consumption.unit !== "ML") {
+          continue;
+        }
+
+        const stockItem = products.find(
+          (product) => product.stockItemId === consumption.stockItemId,
+        )?.stockItem;
+
+        if (!stockItem?.balance) {
+          throw new Error(
+            `Saldo de estoque não encontrado para ${consumption.name}.`,
+          );
+        }
+
+        const available = new Prisma.Decimal(stockItem.balance.quantity);
+
+        const shortage = consumption.quantity.minus(available);
+
+        if (shortage.lte(0)) {
+          continue;
+        }
+
+        const packagingProducts = products.filter(
+          (product) =>
+            product.stockItemId === consumption.stockItemId &&
+            product.stockPackagingId &&
+            (product.type === "STANDARD" || product.type === "SUPPLY") &&
+            !product.packagingChildProductId,
+        );
+
+        const packagingIds = Array.from(
+          new Set(
+            packagingProducts.map((product) => product.stockPackagingId!),
+          ),
+        );
+
+        if (packagingIds.length !== 1) {
+          throw new Error(
+            `Não foi possível identificar uma embalagem única para ${consumption.name}.`,
+          );
+        }
+
+        const packaging = stockItem.packagings.find(
+          (item) => item.id === packagingIds[0],
+        );
+
+        if (!packaging) {
+          throw new Error(
+            `Embalagem não encontrada para ${consumption.name}.`,
+          );
+        }
+
+        const conversionFactor = new Prisma.Decimal(
+          packaging.conversionFactor,
+        );
+
+        if (
+          conversionFactor.lte(0) ||
+          !conversionFactor.isInteger()
+        ) {
+          throw new Error(
+            `Conversão inválida na embalagem de ${consumption.name}.`,
+          );
+        }
+
+        const quantityToOpen = shortage.div(conversionFactor).ceil();
+
+        if (!packaging.balance) {
+          throw new Error(
+            `Saldo de embalagens não encontrado para ${consumption.name}.`,
+          );
+        }
+
+        if (packaging.balance.quantity.lt(quantityToOpen)) {
+          throw new Error(
+            `Estoque insuficiente de garrafas fechadas de ${consumption.name}.`,
+          );
+        }
+
+        const volume = conversionFactor.mul(quantityToOpen);
+
+        const packagingProduct = packagingProducts.find(
+          (product) => product.stockPackagingId === packaging.id,
+        );
+
+        if (!packagingProduct) {
+          throw new Error(
+            `Produto de embalagem não encontrado para ${consumption.name}.`,
+          );
+        }
+
+        openings.push({
+          productId: packagingProduct.id,
+          stockItemId: stockItem.id,
+          stockItemName: stockItem.name,
+          stockPackagingId: packaging.id,
+          packagingName: packaging.name,
+          quantity: quantityToOpen.toNumber(),
+          volume: volume.toString(),
+        });
+      }
+
+      if (openings.length > 0 && !confirmOpenings) {
+        return {
+          confirmationRequired: true as const,
+          openings,
+        };
+      }
+
+      if (confirmOpenings) {
+        if (openings.length === 0) {
+          throw new Error("Não há abertura de garrafas pendente para confirmar.");
+        }
+
+        for (const opening of openings) {
+          await openStockBottleInTransaction(
+            tx,
+            opening.productId,
+            new Prisma.Decimal(opening.quantity),
+            session.user.id,
+          );
+        }
+      }
 
       for (const consumption of finalConsumptions) {
         if (consumption.stockPackagingId) {
@@ -503,6 +654,14 @@ export async function finalizeSale(
 
       return createdSale;
     });
+
+    if ("confirmationRequired" in sale) {
+      return {
+        success: true,
+        confirmationRequired: true,
+        openings: sale.openings,
+      };
+    }
 
     revalidatePath("/dashboard/pos");
     revalidatePath("/dashboard/stock");

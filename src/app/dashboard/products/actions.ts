@@ -3,6 +3,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireModuleAccess } from "@/lib/permissions";
 
@@ -19,6 +20,41 @@ function getNumber(formData: FormData, field: string) {
   }
 
   return number;
+}
+
+function getInteger(formData: FormData, field: string) {
+  const value = getText(formData, field);
+  const number = Number(value.replace(",", "."));
+
+  if (!Number.isSafeInteger(number) || number < 0) {
+    throw new Error(`Informe uma quantidade inteira válida: ${field}`);
+  }
+
+  return number;
+}
+
+async function generateProductCode(tx: Prisma.TransactionClient) {
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(824731905)`;
+
+  const products = await tx.product.findMany({
+    select: {
+      code: true,
+    },
+  });
+
+  const highestCode = products.reduce((highest, product) => {
+    if (!/^\d+$/.test(product.code)) {
+      return highest;
+    }
+
+    const numericCode = Number(product.code);
+
+    return Number.isSafeInteger(numericCode)
+      ? Math.max(highest, numericCode)
+      : highest;
+  }, 0);
+
+  return String(highestCode + 1).padStart(8, "0");
 }
 
 function getOptionalNumber(formData: FormData, field: string) {
@@ -42,13 +78,14 @@ function getRepeatedTexts(formData: FormData, field: string) {
 function parseRepeatedNumber(value: string, field: string) {
   const number = Number(value.replace(",", "."));
 
-  if (!Number.isFinite(number) || number <= 0) {
-    throw new Error(`Informe uma quantidade válida em ${field}.`);
+  if (!Number.isSafeInteger(number) || number <= 0) {
+    throw new Error(
+      `Informe uma quantidade inteira maior que zero em ${field}.`,
+    );
   }
 
   return number;
 }
-
 
 type CompositionGroupInput = {
   name: string;
@@ -219,8 +256,8 @@ export async function createProduct(formData: FormData) {
 
   const purchaseCost = getNumber(formData, "purchaseCost");
 
-  if (!code || !name || !categoryId) {
-    throw new Error("Preencha código, nome e categoria.");
+  if (!name || !categoryId) {
+    throw new Error("Preencha nome e categoria.");
   }
 
   validateType(type);
@@ -235,8 +272,8 @@ export async function createProduct(formData: FormData) {
   const isCombo = type === "COMBO";
 
   if (isRecipe || isCombo) {
-    const initialStock = getNumber(formData, "initialStock");
-    const initialOpenQuantity = getNumber(
+    const initialStock = getInteger(formData, "initialStock");
+    const initialOpenQuantity = getInteger(
       formData,
       "initialOpenQuantity",
     );
@@ -293,6 +330,8 @@ export async function createProduct(formData: FormData) {
         throw new Error("Categoria não encontrada.");
       }
 
+      const productCode = code || await generateProductCode(tx);
+
       if (isRecipe) {
         const stockItemIds = [
           ...new Set(
@@ -318,7 +357,7 @@ export async function createProduct(formData: FormData) {
 
         await tx.product.create({
           data: {
-            code,
+            code: productCode,
             barcode,
             name,
             description,
@@ -354,7 +393,11 @@ export async function createProduct(formData: FormData) {
             },
             active: true,
             type: { in: ["STANDARD", "SUPPLY"] },
-            stockItemId: { not: null },
+            stockItem: {
+              is: {
+                active: true,
+              },
+            },
           },
           select: { id: true },
         });
@@ -367,7 +410,7 @@ export async function createProduct(formData: FormData) {
 
         await tx.product.create({
           data: {
-            code,
+            code: productCode,
             barcode,
             name,
             description,
@@ -395,9 +438,9 @@ export async function createProduct(formData: FormData) {
   const unit = getText(formData, "unit");
   validateUnit(unit);
 
-  const minStock = getNumber(formData, "minStock");
-  const initialStock = getNumber(formData, "initialStock");
-  const initialOpenQuantity = getNumber(
+  const minStock = getInteger(formData, "minStock");
+  const initialStock = getInteger(formData, "initialStock");
+  const initialOpenQuantity = getInteger(
     formData,
     "initialOpenQuantity",
   );
@@ -406,8 +449,8 @@ export async function createProduct(formData: FormData) {
     throw new Error("Tipo de embalagem inválido.");
   }
 
+
   const hasSelfPackaging = packagingMode === "SELF";
-  const hasChildPackaging = packagingMode === "CHILD";
 
   const packagingName = getText(formData, "packagingName");
 
@@ -415,21 +458,63 @@ export async function createProduct(formData: FormData) {
     ? getOptionalNumber(formData, "packagingConversionFactor")
     : null;
 
-  const packagingChildProductId = hasChildPackaging
-    ? getText(formData, "packagingChildProductId")
-    : "";
+  const packagingChildProductId =
+    packagingMode === "CHILD"
+      ? getText(formData, "packagingChildProductId")
+      : "";
 
-  const packagingChildQuantity = hasChildPackaging
+  const hasChildPackaging = Boolean(packagingChildProductId);
+
+  const packagingChildQuantity = packagingChildProductId
     ? getOptionalNumber(formData, "packagingChildQuantity")
     : null;
 
-  const packagingParentProductId = hasChildPackaging
-    ? getText(formData, "packagingParentProductId")
-    : "";
+  const packagingParentProductId =
+    packagingMode === "CHILD"
+      ? getText(formData, "packagingParentProductId")
+      : "";
+
+  if (
+    packagingMode === "CHILD" &&
+    !packagingParentProductId &&
+    !packagingChildProductId
+  ) {
+    throw new Error(
+      "Configure pelo menos um produto de origem ou um produto gerado.",
+    );
+  }
 
   const packagingParentQuantity = packagingParentProductId
     ? getOptionalNumber(formData, "packagingParentQuantity")
     : null;
+
+  const packagingFactors = [
+    packagingConversionFactor,
+    packagingParentQuantity,
+    packagingChildQuantity,
+  ];
+
+  if (
+    packagingParentProductId &&
+    packagingParentProductId === packagingChildProductId
+  ) {
+    throw new Error(
+      "O produto de origem e o produto gerado não podem ser o mesmo.",
+    );
+  }
+
+  if (
+    packagingFactors.some(
+      (value) =>
+        value !== null &&
+        (!Number.isSafeInteger(value) || value <= 0),
+    )
+  ) {
+    throw new Error(
+      "As quantidades de conversão das embalagens devem ser números inteiros maiores que zero.",
+    );
+  }
+
 
   if (hasSelfPackaging) {
     if (!packagingName || packagingConversionFactor === null) {
@@ -487,6 +572,8 @@ export async function createProduct(formData: FormData) {
     if (!category) {
       throw new Error("Categoria não encontrada.");
     }
+
+    const productCode = code || await generateProductCode(tx);
 
     let childProduct = null;
 
@@ -593,7 +680,7 @@ export async function createProduct(formData: FormData) {
 
     const newProduct = await tx.product.create({
       data: {
-        code,
+        code: productCode,
         barcode,
         name,
         description,
@@ -715,6 +802,23 @@ export async function updateProduct(
     ? getOptionalNumber(formData, "packagingChildQuantity")
     : null;
 
+  const packagingFactors = [
+    packagingParentQuantity,
+    packagingChildQuantity,
+  ];
+
+  if (
+    packagingFactors.some(
+      (value) =>
+        value !== null &&
+        (!Number.isSafeInteger(value) || value <= 0),
+    )
+  ) {
+    throw new Error(
+      "As quantidades de conversão das embalagens devem ser números inteiros maiores que zero.",
+    );
+  }
+
   if (!code || !name || !categoryId) {
     throw new Error("Preencha código, nome e categoria.");
   }
@@ -792,7 +896,6 @@ export async function updateProduct(
       );
     }
 
-    // Só valida relacionamentos quando o modo for CHILD.
     if (packagingMode === "CHILD") {
       if (
         currentProduct.type !== "STANDARD" &&
@@ -804,17 +907,22 @@ export async function updateProduct(
       }
 
       if (
+        !currentProduct.stockItem ||
+        !currentProduct.stockItem.active ||
+        currentProduct.stockItem.unit !== "UNIT" ||
+        currentProduct.stockPackagingId
+      ) {
+        throw new Error(
+          "O produto precisa possuir estoque próprio ativo em unidades e não pode ter embalagem própria.",
+        );
+      }
+
+      if (
         packagingParentProductId === id ||
         packagingChildProductId === id
       ) {
         throw new Error(
           "Um produto não pode ter relação de embalagem consigo mesmo.",
-        );
-      }
-
-      if (!packagingParentProductId && !packagingChildProductId) {
-        throw new Error(
-          "Informe um produto de origem ou um produto de destino para a embalagem.",
         );
       }
 
@@ -836,6 +944,25 @@ export async function updateProduct(
         );
       }
 
+      if (
+        packagingParentProductId &&
+        packagingParentProductId === packagingChildProductId
+      ) {
+        throw new Error(
+          "O produto de origem e o produto gerado não podem ser o mesmo.",
+        );
+      }
+
+      if (
+        packagingMode === "CHILD" &&
+        !packagingParentProductId &&
+        !packagingChildProductId
+      ) {
+        throw new Error(
+          "Configure pelo menos um produto de origem ou um produto gerado.",
+        );
+      }
+
       const relatedProductIds = [
         packagingParentProductId,
         packagingChildProductId,
@@ -851,6 +978,14 @@ export async function updateProduct(
           id: true,
           name: true,
           type: true,
+          active: true,
+          stockPackagingId: true,
+          stockItem: {
+            select: {
+              active: true,
+              unit: true,
+            },
+          },
         },
       });
 
@@ -862,13 +997,17 @@ export async function updateProduct(
 
       const invalidProduct = relatedProducts.find(
         (product) =>
-          product.type !== "STANDARD" &&
-          product.type !== "SUPPLY",
+          !product.active ||
+          (product.type !== "STANDARD" && product.type !== "SUPPLY") ||
+          !product.stockItem ||
+          !product.stockItem.active ||
+          product.stockItem.unit !== "UNIT" ||
+          product.stockPackagingId !== null,
       );
 
       if (invalidProduct) {
         throw new Error(
-          `O produto "${invalidProduct.name}" não pode participar de relações de embalagem.`,
+          `O produto "${invalidProduct.name}" precisa estar ativo, possuir estoque próprio ativo em unidades e não ter embalagem própria.`,
         );
       }
 
@@ -889,6 +1028,14 @@ export async function updateProduct(
             );
           }
 
+          if (
+            packagingParentProductId &&
+            currentChildId === packagingParentProductId
+          ) {
+            throw new Error(
+              "Essa relação criaria um ciclo na cadeia de embalagens.",
+            );
+          }
           visitedProducts.add(currentChildId);
 
           const childProductResult: { packagingChildProductId: string | null } | null =
@@ -981,7 +1128,7 @@ export async function updateProduct(
         );
       }
 
-      const minStock = getNumber(formData, "minStock");
+      const minStock = getInteger(formData, "minStock");
       const purchaseCost = getNumber(formData, "purchaseCost");
 
       const conversionFactor =
@@ -1038,7 +1185,11 @@ export async function updateProduct(
           id: { in: comboItems.map((item) => item.componentProductId) },
           active: true,
           type: { in: ["STANDARD", "SUPPLY"] },
-          stockItemId: { not: null },
+          stockItem: {
+            is: {
+              active: true,
+            },
+          },
         },
         select: { id: true },
       });

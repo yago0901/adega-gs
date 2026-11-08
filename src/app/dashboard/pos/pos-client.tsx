@@ -3,6 +3,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { finalizeSale } from "./actions";
+import OpeningConfirmationModal from "./OpeningConfirmationModal";
 
 type CompositionOption = {
   id: string;
@@ -43,6 +44,25 @@ type CartItem = {
   }[];
 };
 
+type BottleOpening = {
+  productId: string;
+  stockItemId: string;
+  stockItemName: string;
+  stockPackagingId: string;
+  packagingName: string;
+  quantity: number;
+  volume: string;
+};
+
+type SaleRequestItem = {
+  productId: string;
+  quantity: number;
+  selections: {
+    groupId: string;
+    optionId: string;
+  }[];
+};
+
 const currency = new Intl.NumberFormat("pt-BR", {
   style: "currency",
   currency: "BRL",
@@ -70,6 +90,9 @@ export default function PosClient({
   const [cart, setCart] = useState<CartItem[]>([]);
   const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
+  const [pendingOpenings, setPendingOpenings] = useState<BottleOpening[]>([]);
+  const [pendingSaleItems, setPendingSaleItems] = useState<SaleRequestItem[] | null>(null);
+  const isSaleAwaitingConfirmation = pendingSaleItems !== null;
 
   const availableProducts = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -99,16 +122,14 @@ export default function PosClient({
         (selection) =>
           selection.groupId === group.id &&
           group.options.some(
-            (option) =>
-              option.id === selection.optionId &&
-              Number(option.available) > 0,
+            (option) => option.id === selection.optionId,
           ),
       );
     });
   });
 
   function addProduct(product: Product) {
-    if (Number(product.stock) <= 0) {
+    if (Number(product.stock) <= 0 && product.type !== "FRACTIONAL") {
       setMessage("Este produto está sem estoque suficiente.");
       return;
     }
@@ -212,19 +233,15 @@ export default function PosClient({
     );
   }
 
-  function handleFinalize() {
-    if (cart.length === 0 || isPending) return;
-
-    setMessage("");
-
+  function executeSale(
+    saleItems: SaleRequestItem[],
+    confirmOpenings = false,
+  ) {
     startTransition(async () => {
       try {
         const result = await finalizeSale(
-          cart.map((item) => ({
-            productId: item.product.id,
-            quantity: item.quantity,
-            selections: item.selections,
-          })),
+          saleItems,
+          confirmOpenings,
         );
 
         if (!result.success) {
@@ -233,12 +250,13 @@ export default function PosClient({
         }
 
         if ("confirmationRequired" in result) {
-          setMessage(
-            "É necessário confirmar a abertura de garrafas antes de concluir a venda.",
-          );
+          setPendingOpenings(result.openings);
+          setPendingSaleItems(saleItems);
           return;
         }
 
+        setPendingOpenings([]);
+        setPendingSaleItems(null);
         setCart([]);
         setSearch("");
 
@@ -253,6 +271,33 @@ export default function PosClient({
         );
       }
     });
+  }
+
+  function handleFinalize() {
+    if (cart.length === 0 || isPending) return;
+
+    setMessage("");
+
+    const saleItems = cart.map((item) => ({
+      productId: item.product.id,
+      quantity: item.quantity,
+      selections: item.selections,
+    }));
+
+    executeSale(saleItems);
+  }
+
+  function handleConfirmOpenings() {
+    if (!pendingSaleItems || isPending) return;
+
+    setMessage("");
+    executeSale(pendingSaleItems, true);
+  }
+
+  function handleCancelOpenings() {
+    setPendingOpenings([]);
+    setPendingSaleItems(null);
+    setMessage("Abertura de garrafas cancelada. A venda não foi realizada.");
   }
 
   return (
@@ -276,6 +321,13 @@ export default function PosClient({
         </div>
       )}
 
+      <OpeningConfirmationModal
+        openings={pendingOpenings}
+        isPending={isPending}
+        onConfirm={handleConfirmOpenings}
+        onCancel={handleCancelOpenings}
+      />
+
       <div className="grid gap-6 lg:grid-cols-[1fr_400px]">
         <section className="space-y-4">
           <input
@@ -283,6 +335,7 @@ export default function PosClient({
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Buscar por nome ou código..."
+            disabled={isSaleAwaitingConfirmation}
             className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none focus:border-blue-500"
           />
 
@@ -294,7 +347,10 @@ export default function PosClient({
                 <button
                   key={product.id}
                   type="button"
-                  disabled={stock <= 0}
+                  disabled={
+                    (stock <= 0 && product.type !== "FRACTIONAL") ||
+                    isSaleAwaitingConfirmation
+                  }
                   onClick={() => addProduct(product)}
                   className="rounded-xl border border-gray-200 bg-white p-4 text-left transition hover:border-blue-400 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
                 >
@@ -371,6 +427,7 @@ export default function PosClient({
                   <button
                     type="button"
                     onClick={() => removeProduct(item.id)}
+                    disabled={isSaleAwaitingConfirmation}
                     className="text-sm text-red-600 hover:underline"
                   >
                     Remover
@@ -384,9 +441,7 @@ export default function PosClient({
                         (selection) => selection.groupId === group.id,
                       );
 
-                      const availableOptions = group.options.filter(
-                        (option) => Number(option.available) > 0,
-                      );
+                      const availableOptions = group.options;
 
                       return (
                         <div key={group.id}>
@@ -401,6 +456,7 @@ export default function PosClient({
                           <select
                             id={`${item.id}-${group.id}`}
                             value={selectedOption?.optionId ?? ""}
+                            disabled={isSaleAwaitingConfirmation}
                             onChange={(event) =>
                               selectCompositionOption(
                                 item.id,
@@ -453,6 +509,7 @@ export default function PosClient({
                   <div className="mt-3 flex items-center gap-3">
                     <button
                       type="button"
+                      disabled={isSaleAwaitingConfirmation}
                       onClick={() =>
                         changeQuantity(item.id, item.quantity - 1)
                       }
@@ -472,7 +529,7 @@ export default function PosClient({
                         changeQuantity(item.id, item.quantity + 1)
                       }
                       disabled={
-                        item.quantity >= Number(item.product.stock)
+                        item.quantity >= Number(item.product.stock) || isSaleAwaitingConfirmation
                       }
                       className="h-8 w-8 rounded border border-gray-300 disabled:opacity-40"
                       aria-label="Aumentar quantidade"
@@ -515,7 +572,12 @@ export default function PosClient({
           <button
             type="button"
             onClick={handleFinalize}
-            disabled={cart.length === 0 || isPending || hasIncompleteComposition}
+            disabled={
+              cart.length === 0 ||
+              isPending ||
+              hasIncompleteComposition ||
+              pendingSaleItems !== null
+            }
             className="mt-5 w-full rounded-lg bg-blue-600 px-4 py-3 font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {isPending ? "Registrando venda..." : "Finalizar venda"}
