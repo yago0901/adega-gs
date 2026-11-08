@@ -41,3 +41,31 @@ export async function requireModuleAccess(
 
   return session;
 }
+
+export async function requireAdmin() {
+  const session = await auth.api.getSession({
+    headers: await headers(),
+  });
+
+  if (!session) {
+    redirect("/login");
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: {
+      active: true,
+      role: true,
+    },
+  });
+
+  if (!user || !user.active) {
+    redirect("/login");
+  }
+
+  if (user.role !== "ADMIN") {
+    redirect("/dashboard");
+  }
+
+  return session;
+}

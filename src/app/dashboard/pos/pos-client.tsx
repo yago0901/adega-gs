@@ -1,9 +1,9 @@
-
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
 import { finalizeSale } from "./actions";
 import OpeningConfirmationModal from "./OpeningConfirmationModal";
+import SignOutButton from "../sign-out-button";
 
 type CompositionOption = {
   id: string;
@@ -89,6 +89,7 @@ export default function PosClient({
   const [search, setSearch] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
   const [message, setMessage] = useState("");
+  const [saleError, setSaleError] = useState("");
   const [isPending, startTransition] = useTransition();
   const [pendingOpenings, setPendingOpenings] = useState<BottleOpening[]>([]);
   const [pendingSaleItems, setPendingSaleItems] = useState<SaleRequestItem[] | null>(null);
@@ -245,7 +246,7 @@ export default function PosClient({
         );
 
         if (!result.success) {
-          setMessage(result.error);
+          setSaleError(result.error);
           return;
         }
 
@@ -266,9 +267,7 @@ export default function PosClient({
           )}`,
         );
       } catch {
-        setMessage(
-          "Não foi possível finalizar a venda. Tente novamente.",
-        );
+        setSaleError("Não foi possível finalizar a venda. Tente novamente.");
       }
     });
   }
@@ -277,6 +276,7 @@ export default function PosClient({
     if (cart.length === 0 || isPending) return;
 
     setMessage("");
+    setSaleError("");
 
     const saleItems = cart.map((item) => ({
       productId: item.product.id,
@@ -291,6 +291,7 @@ export default function PosClient({
     if (!pendingSaleItems || isPending) return;
 
     setMessage("");
+    setSaleError("");
     executeSale(pendingSaleItems, true);
   }
 
@@ -302,14 +303,18 @@ export default function PosClient({
 
   return (
     <main className="space-y-6 p-4 md:p-8">
-      <header>
-        <h1 className="text-2xl font-bold text-gray-900">
-          Frente de Caixa
-        </h1>
+      <header className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">
+            Frente de Caixa
+          </h1>
 
-        <p className="mt-1 text-sm text-gray-500">
-          Selecione os produtos para iniciar uma venda.
-        </p>
+          <p className="mt-1 text-sm text-gray-500">
+            Selecione os produtos para iniciar uma venda.
+          </p>
+        </div>
+
+        <SignOutButton />
       </header>
 
       {message && (
@@ -474,17 +479,17 @@ export default function PosClient({
 
                             {availableOptions.map((option) => (
                               <option key={option.id} value={option.id}>
-                                {option.name} — {option.quantity}{" "}
-                                {option.unit}
+                                {option.name} — {option.quantity} {option.unit}
                               </option>
                             ))}
                           </select>
 
-                          {group.required && availableOptions.length === 0 && (
-                            <p className="mt-1 text-xs text-red-600">
-                              Nenhuma opção disponível em estoque.
+                          {saleError && group.name.toLowerCase().includes("gelo") && (
+                            <p role="alert" className="mt-1 text-xs font-medium text-red-600">
+                              {saleError}
                             </p>
                           )}
+
                         </div>
                       );
                     })}

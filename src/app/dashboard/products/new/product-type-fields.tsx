@@ -610,8 +610,8 @@ export function ProductTypeFields({
                         Quantidade
                         <input
                           type="number"
-                          min="0.001"
-                          step="0.001"
+                          min="1"
+                          step="1"
                           value={option.quantity}
                           onChange={(event) =>
                             updateCompositionOption(

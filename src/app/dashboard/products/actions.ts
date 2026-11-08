@@ -165,9 +165,9 @@ function parseCompositionGroups(
         );
       }
 
-      if (!Number.isFinite(quantity) || quantity <= 0) {
+      if (!Number.isSafeInteger(quantity) || quantity <= 0) {
         throw new Error(
-          `Informe uma quantidade válida no grupo "${name}".`,
+          `Informe uma quantidade inteira maior que zero no grupo "${name}".`,
         );
       }
 

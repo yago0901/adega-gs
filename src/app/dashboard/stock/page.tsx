@@ -323,7 +323,7 @@ async function StockContent() {
                                 <input
                                   type="number"
                                   name="quantity"
-                                  min="0"
+                                  min="1"
                                   step="1"
                                   defaultValue="1"
                                   required
@@ -416,8 +416,8 @@ async function StockContent() {
               <input
                 name="quantity"
                 type="number"
-                min="0.001"
-                step="0.001"
+                min="1"
+                step="1"
                 required
                 className="mt-2 w-full rounded-lg border border-slate-300 p-3"
               />
@@ -484,8 +484,8 @@ async function StockContent() {
               <input
                 name="quantity"
                 type="number"
-                min="0.001"
-                step="0.001"
+                min="1"
+                step="1"
                 required
                 className="mt-2 w-full rounded-lg border border-slate-300 p-3"
               />
@@ -553,7 +553,7 @@ async function StockContent() {
                 name="quantity"
                 type="number"
                 min="0"
-                step="0.001"
+                step="1"
                 required
                 className="mt-2 w-full rounded-lg border border-slate-300 p-3"
               />

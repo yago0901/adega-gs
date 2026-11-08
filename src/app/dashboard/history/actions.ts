@@ -7,8 +7,8 @@ import { prisma } from "@/lib/prisma";
 import { requireModuleAccess } from "@/lib/permissions";
 
 export async function cancelSale(saleId: string) {
+  const session = await requireModuleAccess("HISTORY");
   try {
-    await requireModuleAccess("HISTORY");
 
     if (!saleId) {
       return {
@@ -112,6 +112,7 @@ export async function cancelSale(saleId: string) {
             type: "REVERSAL",
             quantity: quantityToRestore,
             unit: movement.unit,
+            userId: session.user.id,
             reason: "Cancelamento de venda",
             reference: sale.id,
             stockItemId: movement.stockItemId,

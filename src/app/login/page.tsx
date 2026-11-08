@@ -4,6 +4,7 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { signIn } from "@/lib/auth-client";
+import { getPostLoginPath } from "./actions";
 
 export default function LoginPage() {
     const router = useRouter();
@@ -30,7 +31,10 @@ export default function LoginPage() {
                 return;
             }
 
-            router.replace("/dashboard");
+            const destination = await getPostLoginPath();
+
+            router.replace(destination);
+            router.refresh();
         } catch {
             setError("Não foi possível realizar o login. Tente novamente.");
         } finally {

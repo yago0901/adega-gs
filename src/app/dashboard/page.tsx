@@ -9,6 +9,8 @@ import { prisma } from "@/lib/prisma";
 import SignOutButton from "./sign-out-button";
 import { Sidebar } from "@/components/layout/sidebar";
 
+import { connection } from "next/server";
+
 const menu = [
   { label: "Dashboard", href: "/dashboard", icon: "⌂", active: true },
   { label: "Frente de caixa", href: "/dashboard/pos", icon: "▣" },
@@ -27,6 +29,7 @@ function formatCurrency(value: number) {
 }
 
 async function DashboardContent() {
+  await connection();
   const session = await auth.api.getSession({
     headers: await headers(),
   });
@@ -35,81 +38,149 @@ async function DashboardContent() {
     redirect("/login");
   }
 
-  const today = new Date().toLocaleDateString("en-CA", {
-    timeZone: "America/Sao_Paulo",
+  const currentUser = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: {
+      role: true,
+      active: true,
+      accesses: {
+        select: {
+          module: true,
+        },
+      },
+    },
   });
 
-  const startOfDay = new Date(`${today}T00:00:00-03:00`);
+  if (!currentUser || !currentUser.active) {
+    redirect("/login");
+  }
 
-  const [activeProducts, salesToday, stockItems] = await Promise.all([
-    prisma.product.count({
-      where: { active: true },
-    }),
+  if (
+    currentUser.role !== "ADMIN" &&
+    currentUser.accesses.length === 0
+  ) {
+    redirect("/login");
+  }
 
-    prisma.stockMovement.count({
-      where: {
-        type: "SALE",
-        createdAt: { gte: startOfDay },
-      },
-    }),
+  const moduleByHref: Record<string, string> = {
+    "/dashboard/pos": "POS",
+    "/dashboard/products": "PRODUCTS",
+    "/dashboard/stock": "STOCK",
+    "/dashboard/employees": "EMPLOYEES",
+    "/dashboard/finance": "FINANCE",
+    "/dashboard/history": "HISTORY",
+  };
 
-    prisma.stockItem.findMany({
-      where: { active: true },
-      select: {
-        name: true,
-        unit: true,
-        minStock: true,
-        purchaseCost: true,
-        balance: {
-          select: {
-            quantity: true,
-          },
+  const visibleMenu = menu.filter((item) => {
+    if (currentUser.role === "ADMIN") return true;
+
+    if (item.href === "/dashboard") {
+      return currentUser.accesses.length > 1;
+    }
+
+    const requiredModule = moduleByHref[item.href];
+
+    return currentUser.accesses.some(
+      (access) => access.module === requiredModule
+    );
+  });
+
+
+  let activeProducts = 0;
+  let salesToday = 0;
+
+  let lowStockProducts: {
+    name: string;
+    unit: string;
+    minStock: number;
+    quantity: number;
+    purchaseCost: number;
+  }[] = [];
+
+  let inventoryCost = 0;
+
+  if (currentUser.role === "ADMIN") {
+    const today = new Date().toLocaleDateString("en-CA", {
+      timeZone: "America/Sao_Paulo",
+    });
+
+    const startOfDay = new Date(`${today}T00:00:00-03:00`);
+
+    const [productsCount, salesCount, stockItems] = await Promise.all([
+      prisma.product.count({
+        where: { active: true },
+      }),
+
+      prisma.stockMovement.count({
+        where: {
+          type: "SALE",
+          createdAt: { gte: startOfDay },
         },
-        packagings: {
-          select: {
-            conversionFactor: true,
-            balance: {
-              select: {
-                quantity: true,
+      }),
+
+      prisma.stockItem.findMany({
+        where: { active: true },
+        select: {
+          name: true,
+          unit: true,
+          minStock: true,
+          purchaseCost: true,
+          balance: {
+            select: {
+              quantity: true,
+            },
+          },
+          packagings: {
+            select: {
+              conversionFactor: true,
+              balance: {
+                select: {
+                  quantity: true,
+                },
               },
             },
           },
         },
-      },
-    }),
-  ]);
+      }),
+    ]);
 
-  const stockSummary = stockItems.map((item) => {
-    const looseQuantity = item.balance?.quantity.toNumber() ?? 0;
+    activeProducts = productsCount;
+    salesToday = salesCount;
 
-    const packagedQuantity = item.packagings.reduce(
-      (total, packaging) => {
-        const quantity = packaging.balance?.quantity.toNumber() ?? 0;
+    const stockSummary = stockItems.map((item) => {
+      const looseQuantity = item.balance?.quantity.toNumber() ?? 0;
 
-        return total + quantity * packaging.conversionFactor.toNumber();
-      },
+      const packagedQuantity = item.packagings.reduce(
+        (total, packaging) => {
+          const quantity = packaging.balance?.quantity.toNumber() ?? 0;
+
+          return total + quantity * packaging.conversionFactor.toNumber();
+        },
+        0
+      );
+
+      const totalQuantity = looseQuantity + packagedQuantity;
+
+      return {
+        name: item.name,
+        unit: item.unit,
+        minStock: item.minStock.toNumber(),
+        quantity: totalQuantity,
+        purchaseCost: item.purchaseCost.toNumber(),
+      };
+    });
+
+    lowStockProducts = stockSummary
+      .filter((item) => item.quantity <= item.minStock)
+      .sort((a, b) => a.quantity - b.quantity);
+
+    inventoryCost = stockSummary.reduce(
+      (total, item) => total + item.quantity * item.purchaseCost,
       0
     );
+  }
 
-    const totalQuantity = looseQuantity + packagedQuantity;
-
-    return {
-      name: item.name,
-      unit: item.unit,
-      minStock: item.minStock.toNumber(),
-      quantity: totalQuantity,
-      purchaseCost: item.purchaseCost.toNumber(),
-    };
-  });
-
-  const lowStockProducts = stockSummary
-    .filter((item) => item.quantity <= item.minStock)
-    .sort((a, b) => a.quantity - b.quantity);
-
-  const inventoryCost = stockSummary.reduce(
-    (total, item) => total + item.quantity * item.purchaseCost,
-    0
-  );
+  const isAdmin = currentUser.role === "ADMIN";
 
   const cards = [
     {
@@ -140,7 +211,7 @@ async function DashboardContent() {
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900">
-      <Sidebar menu={menu} />
+      <Sidebar menu={visibleMenu} />
 
       <div className="lg:pl-64">
         <header className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4 md:px-8">
@@ -163,38 +234,40 @@ async function DashboardContent() {
         </header>
 
         <main className="space-y-8 p-5 md:p-8">
-          <section>
-            <h3 className="text-lg font-bold">Visão geral</h3>
-            <p className="mt-1 text-sm text-slate-500">
-              Acompanhe os principais indicadores da sua adega.
-            </p>
+          {isAdmin && (
+            <section>
+              <h3 className="text-lg font-bold">Visão geral</h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Acompanhe os principais indicadores da sua adega.
+              </p>
 
-            <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              {cards.map((card) => (
-                <div
-                  key={card.label}
-                  className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
-                >
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium text-slate-500">
-                      {card.label}
+              <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                {cards.map((card) => (
+                  <div
+                    key={card.label}
+                    className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+                  >
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium text-slate-500">
+                        {card.label}
+                      </p>
+                      <span className="text-xl text-emerald-600">
+                        {card.icon}
+                      </span>
+                    </div>
+
+                    <p className="mt-4 text-2xl font-bold tracking-tight">
+                      {card.value}
                     </p>
-                    <span className="text-xl text-emerald-600">
-                      {card.icon}
-                    </span>
+
+                    <p className="mt-2 text-xs text-slate-400">
+                      {card.description}
+                    </p>
                   </div>
-
-                  <p className="mt-4 text-2xl font-bold tracking-tight">
-                    {card.value}
-                  </p>
-
-                  <p className="mt-2 text-xs text-slate-400">
-                    {card.description}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </section>
+                ))}
+              </div>
+            </section>
+          )}
 
           <section className="grid gap-6 xl:grid-cols-2">
             <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -204,92 +277,73 @@ async function DashboardContent() {
               </p>
 
               <div className="mt-5 grid grid-cols-2 gap-3">
-                <Link
-                  href="/dashboard/pos"
-                  className="rounded-lg border border-slate-200 p-4 transition hover:border-emerald-500 hover:bg-emerald-50"
-                >
-                  <span className="text-2xl">▣</span>
-                  <p className="mt-3 text-sm font-semibold">Abrir caixa</p>
-                </Link>
-
-                <Link
-                  href="/dashboard/products"
-                  className="rounded-lg border border-slate-200 p-4 transition hover:border-emerald-500 hover:bg-emerald-50"
-                >
-                  <span className="text-2xl">▤</span>
-                  <p className="mt-3 text-sm font-semibold">Produtos</p>
-                </Link>
-
-                <Link
-                  href="/dashboard/stock"
-                  className="rounded-lg border border-slate-200 p-4 transition hover:border-emerald-500 hover:bg-emerald-50"
-                >
-                  <span className="text-2xl">▦</span>
-                  <p className="mt-3 text-sm font-semibold">
-                    Consultar estoque
-                  </p>
-                </Link>
-
-                <Link
-                  href="/dashboard/history"
-                  className="rounded-lg border border-slate-200 p-4 transition hover:border-emerald-500 hover:bg-emerald-50"
-                >
-                  <span className="text-2xl">◷</span>
-                  <p className="mt-3 text-sm font-semibold">Histórico</p>
-                </Link>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h3 className="font-bold">Atenção ao estoque</h3>
-                  <p className="mt-1 text-sm text-slate-500">
-                    Itens que atingiram o estoque mínimo.
-                  </p>
-                </div>
-
-                <Link
-                  href="/dashboard/stock"
-                  className="text-sm font-semibold text-emerald-700 hover:underline"
-                >
-                  Ver estoque
-                </Link>
-              </div>
-
-              {lowStockProducts.length === 0 ? (
-                <div className="mt-6 rounded-lg bg-slate-50 p-5 text-center">
-                  <p className="text-sm font-medium text-slate-600">
-                    Nenhum produto em alerta.
-                  </p>
-                  <p className="mt-1 text-xs text-slate-400">
-                    Os alertas aparecerão conforme o estoque for movimentado.
-                  </p>
-                </div>
-              ) : (
-                <div className="mt-5 divide-y divide-slate-100">
-                  {lowStockProducts.slice(0, 5).map((item) => (
-                    <div
-                      key={item.name}
-                      className="flex items-center justify-between gap-3 py-3"
+                {visibleMenu
+                  .filter((item) => item.href !== "/dashboard")
+                  .map((item) => (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      className="rounded-lg border border-slate-200 p-4 transition hover:border-emerald-500 hover:bg-emerald-50"
                     >
-                      <div>
-                        <p className="text-sm font-semibold">
-                          {item.name}
-                        </p>
-                        <p className="text-xs text-slate-500">
-                          Mínimo: {item.minStock} {item.unit}
-                        </p>
-                      </div>
-
-                      <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-semibold text-red-700">
-                        {item.quantity} em estoque
-                      </span>
-                    </div>
+                      <span className="text-2xl">{item.icon}</span>
+                      <p className="mt-3 text-sm font-semibold">{item.label}</p>
+                    </Link>
                   ))}
-                </div>
-              )}
+              </div>
             </div>
+
+            {isAdmin && (
+              <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="font-bold">Atenção ao estoque</h3>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Itens que atingiram o estoque mínimo.
+                    </p>
+                  </div>
+
+                  <Link
+                    href="/dashboard/stock"
+                    className="text-sm font-semibold text-emerald-700 hover:underline"
+                  >
+                    Ver estoque
+                  </Link>
+                </div>
+
+                {lowStockProducts.length === 0 ? (
+                  <div className="mt-6 rounded-lg bg-slate-50 p-5 text-center">
+                    <p className="text-sm font-medium text-slate-600">
+                      Nenhum produto em alerta.
+                    </p>
+                    <p className="mt-1 text-xs text-slate-400">
+                      Os alertas aparecerão conforme o estoque for movimentado.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="mt-5 divide-y divide-slate-100">
+                    {lowStockProducts.slice(0, 5).map((item) => (
+                      <div
+                        key={item.name}
+                        className="flex items-center justify-between gap-3 py-3"
+                      >
+                        <div>
+                          <p className="text-sm font-semibold">
+                            {item.name}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            Mínimo: {item.minStock} {item.unit}
+                          </p>
+                        </div>
+
+                        <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-semibold text-red-700">
+                          {item.quantity} em estoque
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </section>
         </main>
       </div>

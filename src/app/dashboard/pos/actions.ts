@@ -279,12 +279,6 @@ export async function finalizeSale(
               throw new Error("Combos aninhados ainda não são suportados.");
             }
 
-            if (component.type === "FRACTIONAL" && component.composition) {
-              throw new Error(
-                `O componente ${component.name} precisa de escolhas individuais. Essa configuração ainda não é suportada em combos.`,
-              );
-            }
-
             consumeComponent(component, componentQuantity);
           }
 
@@ -383,9 +377,22 @@ export async function finalizeSale(
         component: (typeof products)[number]["comboItems"][number]["componentProduct"],
         quantity: Prisma.Decimal,
       ) {
-        if (component.type === "FRACTIONAL" && component.composition) {
+
+        if (!component.active) {
           throw new Error(
-            `O componente ${component.name} precisa de escolhas individuais. Essa configuração ainda não é suportada em combos.`,
+            `O componente ${component.name} está inativo e não pode ser vendido.`,
+          );
+        }
+
+        if (component.stockItem && !component.stockItem.active) {
+          throw new Error(
+            `O estoque vinculado ao componente ${component.name} está inativo.`,
+          );
+        }
+
+        if (component.type === "FRACTIONAL") {
+          throw new Error(
+            `O componente ${component.name} é uma dose e não pode ser utilizado diretamente em combos.`,
           );
         }
 
