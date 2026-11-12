@@ -22,13 +22,17 @@ async function HistoryContent() {
         select: { name: true },
       },
       items: true,
+      payments: true,
     },
   });
 
   const formattedSales = sales.map((sale) => ({
     id: sale.id,
     status: sale.status,
-    paymentMethod: sale.paymentMethod,
+    payments: sale.payments.map((payment) => ({
+      paymentMethod: payment.paymentMethod,
+      amount: Number(payment.amount),
+    })),
     total: Number(sale.total),
     createdAt: sale.createdAt.toISOString(),
     cancelledAt: sale.cancelledAt?.toISOString() ?? null,

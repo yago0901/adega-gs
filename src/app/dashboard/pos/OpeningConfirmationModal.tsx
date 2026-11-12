@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 
 type BottleOpening = {
+  kind: "BOTTLE";
   productId: string;
   stockItemId: string;
   stockItemName: string;
@@ -12,8 +13,20 @@ type BottleOpening = {
   volume: string;
 };
 
+type CommercialPackagingOpening = {
+  kind: "COMMERCIAL";
+  productId: string;
+  productName: string;
+  parentProductName: string;
+  quantity: number;
+  generatedQuantity: string;
+  childProductName: string;
+};
+
+type Opening = BottleOpening | CommercialPackagingOpening;
+
 type Props = {
-  openings: BottleOpening[];
+  openings: Opening[];
   isPending: boolean;
   onConfirm: () => void;
   onCancel: () => void;
@@ -62,7 +75,7 @@ export default function OpeningConfirmationModal({
           id="opening-modal-title"
           className="text-lg font-bold text-gray-900"
         >
-          Confirmar abertura de garrafas
+          Confirmar abertura de estoque
         </h2>
       </div>
 
@@ -74,20 +87,43 @@ export default function OpeningConfirmationModal({
       <div className="mt-4 max-h-60 space-y-3 overflow-y-auto">
         {openings.map((opening) => (
           <div
-            key={opening.stockPackagingId}
+            key={
+              opening.kind === "BOTTLE"
+                ? `BOTTLE-${opening.stockPackagingId}`
+                : `COMMERCIAL-${opening.productId}`
+            }
             className="rounded-lg border border-gray-200 bg-gray-50 p-3"
           >
-            <p className="font-semibold text-gray-900">
-              {opening.stockItemName}
-            </p>
+            {opening.kind === "BOTTLE" ? (
+              <>
+                <p className="font-semibold text-gray-900">
+                  {opening.stockItemName}
+                </p>
 
-            <p className="mt-1 text-sm text-gray-600">
-              {opening.quantity}x {opening.packagingName}
-            </p>
+                <p className="mt-1 text-sm text-gray-600">
+                  {opening.quantity}x {opening.packagingName}
+                </p>
 
-            <p className="text-sm text-gray-600">
-              Entrada de {opening.volume} ml no estoque aberto
-            </p>
+                <p className="text-sm text-gray-600">
+                  Entrada de {opening.volume} ml no estoque aberto
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="font-semibold text-gray-900">
+                  {opening.parentProductName}
+                </p>
+
+                <p className="mt-1 text-sm text-gray-600">
+                  {opening.quantity}x para gerar {opening.childProductName}
+                </p>
+
+                <p className="text-sm text-gray-600">
+                  Entrada de {opening.generatedQuantity} unidades de{" "}
+                  {opening.childProductName}
+                </p>
+              </>
+            )}
           </div>
         ))}
       </div>

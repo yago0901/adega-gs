@@ -90,7 +90,41 @@ export default function PosPage() {
 }
 
 async function PosContent() {
-  await requireModuleAccess("POS");
+  const session = await requireModuleAccess("POS");
+
+  const user = await prisma.user.findUnique({
+    where: {
+      id: session.user.id,
+    },
+    select: {
+      role: true,
+      accesses: {
+        where: {
+          module: "POS",
+        },
+        select: {
+          canManageCashRegister: true,
+        },
+      },
+    },
+  });
+
+  const canManageCashRegister =
+    user?.role === "ADMIN" ||
+    user?.accesses.some(
+      (access) => access.canManageCashRegister,
+    ) === true;
+
+  const cashRegister = await prisma.cashRegister.findFirst({
+    where: {
+      status: "OPEN",
+    },
+    select: {
+      id: true,
+      openingAmount: true,
+      openedAt: true,
+    },
+  });
 
   const products = await prisma.product.findMany({
     where: {
@@ -174,6 +208,11 @@ async function PosContent() {
           },
         },
       },
+      packagingParentProducts: {
+        select: {
+          id: true,
+        },
+      },
     },
     orderBy: {
       name: "asc",
@@ -204,12 +243,12 @@ async function PosContent() {
                 const available =
                   component.type === "FRACTIONAL"
                     ? getCompositionAvailability(
-                        component.composition?.groups ?? [],
-                      )
+                      component.composition?.groups ?? [],
+                    )
                     : getDirectStock(
-                        component.stockItem,
-                        component.stockPackaging,
-                      );
+                      component.stockItem,
+                      component.stockPackaging,
+                    );
 
                 return available / required;
               }),
@@ -232,26 +271,43 @@ async function PosContent() {
       salePrice: product.salePrice.toString(),
       unit: "UNIT",
       stock: String(stock),
+      canOpenFromPackaging:
+        Boolean(product.stockPackaging) ||
+        product.packagingParentProducts.length > 0,
 
       composition: product.composition
         ? {
-            groups: product.composition.groups.map((group) => ({
-              id: group.id,
-              name: group.name,
-              required: group.minSelections > 0,
-              options: group.options.map((option) => ({
-                id: option.id,
-                stockItemId: option.stockItemId,
-                name: option.stockItem.name,
-                unit: option.stockItem.unit,
-                quantity: option.quantity.toString(),
-                available: String(getOptionAvailability(option)),
-              })),
+          groups: product.composition.groups.map((group) => ({
+            id: group.id,
+            name: group.name,
+            required: group.minSelections > 0,
+            options: group.options.map((option) => ({
+              id: option.id,
+              stockItemId: option.stockItemId,
+              name: option.stockItem.name,
+              unit: option.stockItem.unit,
+              quantity: option.quantity.toString(),
+              available: String(getOptionAvailability(option)),
             })),
-          }
+          })),
+        }
         : null,
     };
   });
 
-  return <PosClient products={formattedProducts} />;
+  return (
+    <PosClient
+      products={formattedProducts}
+      canManageCashRegister={canManageCashRegister}
+      cashRegister={
+        cashRegister
+          ? {
+            id: cashRegister.id,
+            openingAmount: cashRegister.openingAmount.toString(),
+            openedAt: cashRegister.openedAt.toISOString(),
+          }
+          : null
+      }
+    />
+  );
 }

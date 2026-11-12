@@ -4,8 +4,9 @@
 import { revalidatePath } from "next/cache";
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
-import { requireModuleAccess } from "@/lib/permissions";
+import { requireModuleAccess, requireCashRegisterManagement } from "@/lib/permissions";
 import { openStockBottleInTransaction } from "../stock/open-stock-bottle";
+import { openCommercialPackagingInTransaction } from "../stock/open-commercial-packaging";
 
 type SaleRequestItem = {
   productId: string;
@@ -16,7 +17,13 @@ type SaleRequestItem = {
   }[];
 };
 
+type SalePaymentRequest = {
+  paymentMethod: "CASH" | "PIX" | "CREDIT_CARD" | "DEBIT_CARD";
+  amount: string;
+};
+
 type BottleOpening = {
+  kind: "BOTTLE";
   productId: string;
   stockItemId: string;
   stockItemName: string;
@@ -26,12 +33,25 @@ type BottleOpening = {
   volume: string;
 };
 
+type CommercialPackagingOpening = {
+  kind: "COMMERCIAL";
+  productId: string;
+  productName: string;
+  parentProductName: string;
+  quantity: number;
+  generatedQuantity: string;
+  childProductName: string;
+};
+
+type Opening = BottleOpening | CommercialPackagingOpening;
+
 type SaleResult =
   | { success: true; saleId: string; total: string }
-  | { success: true; confirmationRequired: true; openings: BottleOpening[] }
+  | { success: true; confirmationRequired: true; openings: Opening[] }
   | { success: false; error: string };
 
 type Consumption = {
+  productId?: string;
   stockItemId: string;
   stockPackagingId: string | null;
   quantity: Prisma.Decimal;
@@ -44,8 +64,285 @@ type SelectedCompositionOption = {
   optionId: string;
 };
 
+type OpenCashRegisterResult =
+  | { success: true; cashRegisterId: string }
+  | { success: false; error: string };
+
+export async function openCashRegister(
+  openingAmount: string,
+): Promise<OpenCashRegisterResult> {
+  try {
+    const session = await requireCashRegisterManagement();
+
+    const normalizedAmount = openingAmount.trim().replace(",", ".");
+
+    if (!/^\d+(\.\d{1,2})?$/.test(normalizedAmount)) {
+      return {
+        success: false,
+        error: "Informe um valor inicial válido.",
+      };
+    }
+
+    const amount = new Prisma.Decimal(normalizedAmount);
+
+    if (amount.gt("9999999999.99")) {
+      return {
+        success: false,
+        error: "O valor inicial informado é muito alto.",
+      };
+    }
+
+    const cashRegister = await prisma.$transaction(
+      async (tx) => {
+        const existingCashRegister = await tx.cashRegister.findFirst({
+          where: {
+            status: "OPEN",
+          },
+        });
+
+        if (existingCashRegister) {
+          throw new Error("Já existe um caixa aberto.");
+        }
+
+        return tx.cashRegister.create({
+          data: {
+            openingAmount: amount,
+            openedById: session.user.id,
+          },
+        });
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      },
+    );
+
+    revalidatePath("/dashboard/pos");
+
+    return {
+      success: true,
+      cashRegisterId: cashRegister.id,
+    };
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2034"
+    ) {
+      return {
+        success: false,
+        error: "Não foi possível abrir o caixa. Tente novamente.",
+      };
+    }
+
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Não foi possível abrir o caixa.",
+    };
+  }
+}
+
+type CloseCashRegisterResult =
+  | {
+    success: true;
+    expectedAmount: string;
+    countedAmount: string;
+    difference: string;
+    paymentTotals: {
+      cash: string;
+      pix: string;
+      creditCard: string;
+      debitCard: string;
+      total: string;
+    };
+  }
+  | {
+    success: false;
+    error: string;
+  };
+
+export async function closeCashRegister(
+  countedAmount: string,
+): Promise<CloseCashRegisterResult> {
+  try {
+    const session = await requireCashRegisterManagement();
+
+    const normalizedAmount = countedAmount.trim().replace(",", ".");
+
+    if (!/^\d+(\.\d{1,2})?$/.test(normalizedAmount)) {
+      return {
+        success: false,
+        error: "Informe um valor contado válido.",
+      };
+    }
+
+    const counted = new Prisma.Decimal(normalizedAmount);
+
+    if (counted.gt("9999999999.99")) {
+      return {
+        success: false,
+        error: "O valor contado é muito alto.",
+      };
+    }
+
+    const result = await prisma.$transaction(
+      async (tx) => {
+        const [lockedCashRegister] = await tx.$queryRaw<{ id: string }[]>`
+          SELECT "id"
+          FROM "CashRegister"
+          WHERE "status" = 'OPEN'
+          LIMIT 1
+          FOR UPDATE
+        `;
+
+        if (!lockedCashRegister) {
+          throw new Error("Nenhum caixa aberto foi encontrado.");
+        }
+
+        const cashRegister = await tx.cashRegister.findUnique({
+          where: {
+            id: lockedCashRegister.id,
+          },
+        });
+
+        if (!cashRegister || cashRegister.status !== "OPEN") {
+          throw new Error("Nenhum caixa aberto foi encontrado.");
+        }
+
+        if (!cashRegister) {
+          throw new Error("Nenhum caixa aberto foi encontrado.");
+        }
+
+        const paymentTotals = await tx.salePayment.groupBy({
+          by: ["paymentMethod"],
+          where: {
+            sale: {
+              cashRegisterId: cashRegister.id,
+              status: "COMPLETED",
+            },
+          },
+          _sum: {
+            amount: true,
+          },
+        });
+
+        const cashTotal =
+          paymentTotals.find((payment) => payment.paymentMethod === "CASH")
+            ?._sum.amount ?? new Prisma.Decimal(0);
+
+        const pixTotal =
+          paymentTotals.find((payment) => payment.paymentMethod === "PIX")
+            ?._sum.amount ?? new Prisma.Decimal(0);
+
+        const creditCardTotal =
+          paymentTotals.find((payment) => payment.paymentMethod === "CREDIT_CARD")
+            ?._sum.amount ?? new Prisma.Decimal(0);
+
+        const debitCardTotal =
+          paymentTotals.find((payment) => payment.paymentMethod === "DEBIT_CARD")
+            ?._sum.amount ?? new Prisma.Decimal(0);
+
+        const totalSales = cashTotal
+          .plus(pixTotal)
+          .plus(creditCardTotal)
+          .plus(debitCardTotal);
+
+        const supplies = await tx.cashMovement.aggregate({
+          where: {
+            cashRegisterId: cashRegister.id,
+            type: "SUPPLY",
+          },
+          _sum: {
+            amount: true,
+          },
+        });
+
+        const withdrawals = await tx.cashMovement.aggregate({
+          where: {
+            cashRegisterId: cashRegister.id,
+            type: "WITHDRAWAL",
+          },
+          _sum: {
+            amount: true,
+          },
+        });
+
+        const expected = cashRegister.openingAmount
+          .plus(cashTotal)
+          .plus(supplies._sum.amount ?? 0)
+          .minus(withdrawals._sum.amount ?? 0);
+
+        const difference = counted.minus(expected);
+
+        const updated = await tx.cashRegister.updateMany({
+          where: {
+            id: cashRegister.id,
+            status: "OPEN",
+          },
+          data: {
+            status: "CLOSED",
+            expectedAmount: expected,
+            countedAmount: counted,
+            difference,
+            closedAt: new Date(),
+            closedById: session.user.id,
+          },
+        });
+
+        if (updated.count !== 1) {
+          throw new Error("Não foi possível fechar o caixa.");
+        }
+
+        return {
+          expectedAmount: expected.toString(),
+          countedAmount: counted.toString(),
+          difference: difference.toString(),
+          paymentTotals: {
+            cash: cashTotal.toString(),
+            pix: pixTotal.toString(),
+            creditCard: creditCardTotal.toString(),
+            debitCard: debitCardTotal.toString(),
+            total: totalSales.toString(),
+          },
+        };
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      },
+    );
+
+    revalidatePath("/dashboard/pos");
+    revalidatePath("/dashboard/history");
+
+    return {
+      success: true,
+      ...result,
+    };
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2034"
+    ) {
+      return {
+        success: false,
+        error: "O caixa foi alterado durante o fechamento. Tente novamente.",
+      };
+    }
+
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Não foi possível fechar o caixa.",
+    };
+  }
+}
+
 export async function finalizeSale(
   items: SaleRequestItem[],
+  payments: SalePaymentRequest[],
   confirmOpenings = false,
 ): Promise<SaleResult> {
   try {
@@ -57,6 +354,52 @@ export async function finalizeSale(
 
     if (items.length > 100) {
       return { success: false, error: "Limite de 100 itens por venda." };
+    }
+
+    if (!Array.isArray(payments) || payments.length === 0) {
+      return {
+        success: false,
+        error: "Informe pelo menos uma forma de pagamento.",
+      };
+    }
+
+    if (payments.length > 4) {
+      return {
+        success: false,
+        error: "Limite de 4 formas de pagamento por venda.",
+      };
+    }
+
+    const validPaymentMethods = [
+      "CASH",
+      "PIX",
+      "CREDIT_CARD",
+      "DEBIT_CARD",
+    ] as const;
+
+    for (const payment of payments) {
+      if (
+        !payment ||
+        !validPaymentMethods.includes(
+          payment.paymentMethod as (typeof validPaymentMethods)[number],
+        ) ||
+        typeof payment.amount !== "string" ||
+        !/^\d+(\.\d{1,2})?$/.test(payment.amount.trim())
+      ) {
+        return {
+          success: false,
+          error: "Um dos pagamentos possui dados inválidos.",
+        };
+      }
+
+      const amount = new Prisma.Decimal(payment.amount);
+
+      if (amount.lte(0) || amount.gt("9999999999.99")) {
+        return {
+          success: false,
+          error: "O valor de um dos pagamentos é inválido.",
+        };
+      }
     }
 
     for (const item of items) {
@@ -93,6 +436,22 @@ export async function finalizeSale(
     }
 
     const sale = await prisma.$transaction(async (tx) => {
+      const [lockedCashRegister] = await tx.$queryRaw<{ id: string }[]>`
+        SELECT "id"
+        FROM "CashRegister"
+        WHERE "status" = 'OPEN'
+        LIMIT 1
+        FOR UPDATE
+      `;
+
+      if (!lockedCashRegister) {
+        throw new Error(
+          "É necessário que o caixa da adega esteja aberto para registrar uma venda.",
+        );
+      }
+
+      const cashRegister = lockedCashRegister;
+
       const products = await tx.product.findMany({
         where: {
           active: true,
@@ -102,6 +461,18 @@ export async function finalizeSale(
             include: {
               balance: true,
               packagings: {
+                include: {
+                  balance: true,
+                },
+              },
+            },
+          },
+          packagingParentProducts: {
+            where: {
+              active: true,
+            },
+            include: {
+              stockItem: {
                 include: {
                   balance: true,
                 },
@@ -237,6 +608,17 @@ export async function finalizeSale(
         new Prisma.Decimal(0),
       );
 
+      const paymentsTotal = payments.reduce(
+        (sum, payment) => sum.plus(payment.amount.trim()),
+        new Prisma.Decimal(0),
+      );
+
+      if (!paymentsTotal.equals(total)) {
+        throw new Error(
+          "A soma dos pagamentos precisa ser igual ao total da venda.",
+        );
+      }
+
       const consumptions: Consumption[] = [];
 
       function addConsumption(
@@ -245,12 +627,14 @@ export async function finalizeSale(
         quantity: Prisma.Decimal,
         unit: "UNIT" | "ML" | "GRAM",
         name: string,
+        productId?: string,
       ) {
         if (quantity.lte(0)) {
           throw new Error("Quantidade de consumo inválida.");
         }
 
         consumptions.push({
+          productId,
           stockItemId,
           stockPackagingId,
           quantity,
@@ -351,6 +735,7 @@ export async function finalizeSale(
             quantity,
             "UNIT",
             product.name,
+            product.id,
           );
 
           return;
@@ -363,6 +748,7 @@ export async function finalizeSale(
             quantity,
             product.stockItem.unit,
             product.stockItem.name,
+            product.id,
           );
 
           return;
@@ -403,6 +789,7 @@ export async function finalizeSale(
             quantity,
             "UNIT",
             component.name,
+            component.id,
           );
 
           return;
@@ -415,6 +802,7 @@ export async function finalizeSale(
             quantity,
             component.stockItem.unit,
             component.stockItem.name,
+            component.id,
           );
 
           return;
@@ -436,7 +824,15 @@ export async function finalizeSale(
       const groupedConsumptions = new Map<string, Consumption>();
 
       for (const consumption of consumptions) {
-        const key = `${consumption.stockItemId}:${consumption.stockPackagingId ?? "OPEN"}`;
+        const baseKey = `${consumption.stockItemId}:${consumption.stockPackagingId ?? "OPEN"}`;
+
+        const key =
+          !consumption.stockPackagingId &&
+            consumption.unit === "UNIT" &&
+            consumption.productId
+            ? `${baseKey}:${consumption.productId}`
+            : baseKey;
+
         const existing = groupedConsumptions.get(key);
 
         if (existing) {
@@ -449,7 +845,7 @@ export async function finalizeSale(
       }
 
       const finalConsumptions = Array.from(groupedConsumptions.values());
-      const openings: BottleOpening[] = [];
+      const openings: Opening[] = [];
 
       for (const consumption of finalConsumptions) {
         if (consumption.stockPackagingId || consumption.unit !== "ML") {
@@ -544,6 +940,7 @@ export async function finalizeSale(
         }
 
         openings.push({
+          kind: "BOTTLE",
           productId: packagingProduct.id,
           stockItemId: stockItem.id,
           stockItemName: stockItem.name,
@@ -551,6 +948,103 @@ export async function finalizeSale(
           packagingName: packaging.name,
           quantity: quantityToOpen.toNumber(),
           volume: volume.toString(),
+        });
+      }
+
+      for (const consumption of finalConsumptions) {
+        if (
+          consumption.stockPackagingId ||
+          consumption.unit !== "UNIT" ||
+          !consumption.productId
+        ) {
+          continue;
+        }
+
+        const childProduct = productMap.get(consumption.productId);
+
+        if (!childProduct) {
+          throw new Error(
+            `Produto não encontrado para o consumo de ${consumption.name}.`,
+          );
+        }
+
+        if (
+          childProduct.type !== "STANDARD" &&
+          childProduct.type !== "SUPPLY"
+        ) {
+          continue;
+        }
+
+        if (
+          !childProduct.active ||
+          !childProduct.stockItem ||
+          !childProduct.stockItem.active ||
+          childProduct.stockItem.unit !== "UNIT" ||
+          childProduct.stockPackagingId !== null ||
+          !childProduct.stockItem.balance
+        ) {
+          throw new Error(
+            `O estoque de ${childProduct.name} não está configurado corretamente para abertura comercial.`,
+          );
+        }
+
+        const available = new Prisma.Decimal(
+          childProduct.stockItem.balance.quantity,
+        );
+
+        const shortage = consumption.quantity.minus(available);
+
+        if (shortage.lte(0)) {
+          continue;
+        }
+
+        const parents = childProduct.packagingParentProducts;
+
+        if (parents.length !== 1) {
+          throw new Error(
+            `Não foi possível identificar uma embalagem pai única para ${childProduct.name}.`,
+          );
+        }
+
+        const parent = parents[0];
+        const conversionFactor = parent.packagingChildQuantity;
+
+        if (
+          !parent.active ||
+          (parent.type !== "STANDARD" && parent.type !== "SUPPLY") ||
+          !parent.stockItem ||
+          !parent.stockItem.active ||
+          parent.stockItem.unit !== "UNIT" ||
+          parent.stockPackagingId !== null ||
+          parent.packagingChildProductId !== childProduct.id ||
+          !parent.stockItem.balance ||
+          !conversionFactor ||
+          conversionFactor.lte(0) ||
+          !conversionFactor.isInteger()
+        ) {
+          throw new Error(
+            `A configuração da embalagem pai de ${childProduct.name} é inválida.`,
+          );
+        }
+
+        const quantityToOpen = shortage.div(conversionFactor).ceil();
+
+        if (parent.stockItem.balance.quantity.lt(quantityToOpen)) {
+          throw new Error(
+            `Estoque insuficiente de ${parent.name} para gerar ${childProduct.name}.`,
+          );
+        }
+
+        const generatedQuantity = quantityToOpen.mul(conversionFactor);
+
+        openings.push({
+          kind: "COMMERCIAL",
+          productId: parent.id,
+          productName: childProduct.name,
+          parentProductName: parent.name,
+          quantity: quantityToOpen.toNumber(),
+          generatedQuantity: generatedQuantity.toString(),
+          childProductName: childProduct.name,
         });
       }
 
@@ -563,16 +1057,27 @@ export async function finalizeSale(
 
       if (confirmOpenings) {
         if (openings.length === 0) {
-          throw new Error("Não há abertura de garrafas pendente para confirmar.");
+          throw new Error(
+            "Não há abertura de estoque pendente para confirmar.",
+          );
         }
 
         for (const opening of openings) {
-          await openStockBottleInTransaction(
-            tx,
-            opening.productId,
-            new Prisma.Decimal(opening.quantity),
-            session.user.id,
-          );
+          if (opening.kind === "BOTTLE") {
+            await openStockBottleInTransaction(
+              tx,
+              opening.productId,
+              new Prisma.Decimal(opening.quantity),
+              session.user.id,
+            );
+          } else {
+            await openCommercialPackagingInTransaction(
+              tx,
+              opening.productId,
+              new Prisma.Decimal(opening.quantity),
+              session.user.id,
+            );
+          }
         }
       }
 
@@ -624,6 +1129,15 @@ export async function finalizeSale(
         data: {
           total,
           userId: session.user.id,
+          cashRegisterId: cashRegister.id,
+
+          payments: {
+            create: payments.map((payment) => ({
+              paymentMethod: payment.paymentMethod,
+              amount: new Prisma.Decimal(payment.amount.trim()),
+            })),
+          },
+
           items: {
             create: saleItems.map((item) => ({
               productId: item.product.id,

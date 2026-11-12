@@ -14,6 +14,7 @@ type Employee = {
   createdAt: Date;
   accesses: {
     module: string;
+    canManageCashRegister: boolean;
   }[];
 };
 

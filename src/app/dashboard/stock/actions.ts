@@ -1,13 +1,13 @@
 
 "use server";
 
-import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { Prisma } from "@/generated/prisma/client";
 
 import { prisma } from "@/lib/prisma";
 import { requireModuleAccess } from "@/lib/permissions";
 import { openStockBottleInTransaction } from "./open-stock-bottle";
+import { openCommercialPackagingInTransaction } from "./open-commercial-packaging";
 
 function getText(formData: FormData, field: string) {
   return String(formData.get(field) ?? "").trim();
@@ -342,169 +342,18 @@ export async function openCommercialPackaging(formData: FormData) {
     throw new Error("Produto não informado.");
   }
 
-  const reference = randomUUID();
-
   await prisma.$transaction(async (tx) => {
-    const parentProduct = await tx.product.findFirst({
-      where: {
-        id: productId,
-        active: true,
-      },
-      include: {
-        stockItem: {
-          include: {
-            balance: true,
-          },
-        },
-        packagingChildProduct: {
-          include: {
-            stockItem: {
-              include: {
-                balance: true,
-              },
-            },
-          },
-        },
-      },
-    });
-
-    if (!parentProduct) {
-      throw new Error("Produto não encontrado ou inativo.");
-    }
-
-    if (
-      parentProduct.type !== "STANDARD" &&
-      parentProduct.type !== "SUPPLY"
-    ) {
-      throw new Error("Somente produtos comuns podem ser abertos.");
-    }
-
-    const parentStockItem = parentProduct.stockItem;
-
-    if (!parentStockItem?.active) {
-      throw new Error("O estoque da embalagem está inativo.");
-    }
-
-    const childProduct = parentProduct.packagingChildProduct;
-    const conversionFactor = parentProduct.packagingChildQuantity;
-
-    if (!parentStockItem || !parentStockItem.balance) {
-      throw new Error("Saldo da embalagem não encontrado.");
-    }
-
-    if (parentStockItem.unit !== "UNIT") {
-      throw new Error(
-        "A embalagem comercial precisa controlar seu estoque em unidades.",
-      );
-    }
-
-    if (!childProduct || !conversionFactor) {
-      throw new Error(
-        "Este produto não possui uma conversão de embalagem configurada.",
-      );
-    }
-
-    if (!childProduct.active || !childProduct.stockItem) {
-      throw new Error("O produto convertido está inativo ou sem estoque.");
-    }
-
-    if (
-      childProduct.type !== "STANDARD" &&
-      childProduct.type !== "SUPPLY"
-    ) {
-      throw new Error("O produto convertido não é um produto comum.");
-    }
-
-    if (
-      childProduct.stockItem.unit !== "UNIT" ||
-      !childProduct.stockItem.active
-    ) {
-      throw new Error(
-        "O produto convertido precisa ter estoque próprio em unidades.",
-      );
-    }
-
-    if (!childProduct.stockItem.balance) {
-      throw new Error("Saldo do produto convertido não encontrado.");
-    }
-
-    if (childProduct.stockPackagingId !== null) {
-      throw new Error(
-        "O produto convertido não pode possuir embalagem própria do tipo SELF.",
-      );
-    }
-
-    if (
-      conversionFactor.lessThanOrEqualTo(0) ||
-      !conversionFactor.isInteger()
-    ) {
-      throw new Error("O fator de conversão precisa ser um número inteiro maior que zero.");
-    }
-
-    const parentUpdate = await tx.stockBalance.updateMany({
-      where: {
-        stockItemId: parentStockItem.id,
-        quantity: {
-          gte: new Prisma.Decimal(1),
-        },
-      },
-      data: {
-        quantity: {
-          decrement: new Prisma.Decimal(1),
-        },
-      },
-    });
-
-    if (parentUpdate.count !== 1) {
-      throw new Error(
-        `Estoque insuficiente de ${parentProduct.name}.`,
-      );
-    }
-
-    const childUpdate = await tx.stockBalance.updateMany({
-      where: {
-        stockItemId: childProduct.stockItem.id,
-      },
-      data: {
-        quantity: {
-          increment: conversionFactor,
-        },
-      },
-    });
-
-    if (childUpdate.count !== 1) {
-      throw new Error(
-        `Não foi possível atualizar o estoque de ${childProduct.name}.`,
-      );
-    }
-
-    await tx.stockMovement.create({
-      data: {
-        type: "OPEN_PACKAGING",
-        quantity: new Prisma.Decimal(-1),
-        unit: "UNIT",
-        reason: `Abertura de ${parentProduct.name}: conversão para ${conversionFactor.toString()} ${childProduct.name}.`,
-        reference,
-        stockItemId: parentStockItem.id,
-        userId: session.user.id,
-      },
-    });
-
-    await tx.stockMovement.create({
-      data: {
-        type: "OPEN_PACKAGING",
-        quantity: conversionFactor,
-        unit: "UNIT",
-        reason: `Recebimento por abertura de ${parentProduct.name}.`,
-        reference,
-        stockItemId: childProduct.stockItem.id,
-        userId: session.user.id,
-      },
-    });
+    await openCommercialPackagingInTransaction(
+      tx,
+      productId,
+      new Prisma.Decimal(1),
+      session.user.id,
+    );
   });
 
   revalidateStockPages();
 }
+
 
 export async function openStockBottle(formData: FormData) {
   const session = await requireModuleAccess("STOCK");

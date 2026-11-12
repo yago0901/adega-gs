@@ -7,7 +7,10 @@ import Link from "next/link";
 type Sale = {
   id: string;
   status: "COMPLETED" | "CANCELLED";
-  paymentMethod: string | null;
+  payments: {
+    paymentMethod: string;
+    amount: number;
+  }[];
   total: number;
   createdAt: string;
   cancelledAt: string | null;
@@ -57,7 +60,8 @@ export function HistoryClient({ sales }: { sales: Sale[] }) {
         status === "ALL" || sale.status === status;
 
       const matchesPayment =
-        payment === "ALL" || sale.paymentMethod === payment;
+        payment === "ALL" ||
+        sale.payments.some((item) => item.paymentMethod === payment);
 
       const matchesStart = !startDate || date >= startDate;
       const matchesEnd = !endDate || date <= endDate;
@@ -193,8 +197,13 @@ export function HistoryClient({ sales }: { sales: Sale[] }) {
                   </td>
                   <td className="p-4">{sale.employee}</td>
                   <td className="p-4">
-                    {sale.paymentMethod
-                      ? paymentLabels[sale.paymentMethod]
+                    {sale.payments.length > 0
+                      ? sale.payments
+                        .map(
+                          (item) =>
+                            paymentLabels[item.paymentMethod] ?? item.paymentMethod,
+                        )
+                        .join(", ")
                       : "Não informado"}
                   </td>
                   <td className="p-4 font-semibold">
@@ -274,12 +283,24 @@ export function HistoryClient({ sales }: { sales: Sale[] }) {
               <p>
                 <strong>Funcionário:</strong> {selectedSale.employee}
               </p>
-              <p>
-                <strong>Pagamento:</strong>{" "}
-                {selectedSale.paymentMethod
-                  ? paymentLabels[selectedSale.paymentMethod]
-                  : "Não informado"}
-              </p>
+              <div>
+                <p>
+                  <strong>Pagamento:</strong>
+                </p>
+
+                {selectedSale.payments.length > 0 ? (
+                  <div className="ml-2">
+                    {selectedSale.payments.map((item, index) => (
+                      <p key={`${item.paymentMethod}-${index}`}>
+                        {paymentLabels[item.paymentMethod] ?? item.paymentMethod}:{" "}
+                        {currency.format(item.amount)}
+                      </p>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="ml-2">Não informado</p>
+                )}
+              </div>
               <p>
                 <strong>Situação:</strong>{" "}
                 {selectedSale.status === "COMPLETED"

@@ -57,6 +57,16 @@ enum PaymentMethod {
   DEBIT_CARD
 }
 
+enum CashRegisterStatus {
+  OPEN
+  CLOSED
+}
+
+enum CashMovementType {
+  SUPPLY
+  WITHDRAWAL
+}
+
 model User {
   id            String   @id @default(cuid())
   name          String
@@ -76,6 +86,10 @@ model User {
   accesses       UserModuleAccess[]
   stockMovements StockMovement[]
   sales          Sale[]
+
+  openedCashRegisters CashRegister[] @relation("CashRegisterOpener")
+  closedCashRegisters CashRegister[] @relation("CashRegisterCloser")
+  cashMovements       CashMovement[]
 }
 
 model Session {
@@ -127,6 +141,8 @@ model UserModuleAccess {
   id     String @id @default(cuid())
   module Module
 
+  canManageCashRegister Boolean @default(false)
+
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -164,12 +180,12 @@ model Product {
   stockPackagingId String?
   stockPackaging   StockPackaging? @relation(fields: [stockPackagingId], references: [id])
 
-  packagingChildProductId String? @unique
+  packagingChildProductId String?   @unique
   packagingChildProduct   Product?  @relation("ProductPackagingChild", fields: [packagingChildProductId], references: [id], onDelete: Restrict)
   packagingParentProducts Product[] @relation("ProductPackagingChild")
   packagingChildQuantity  Decimal?  @db.Decimal(12, 3)
 
-  composition ProductComposition?
+  composition      ProductComposition?
   comboItems       ComboItem[]         @relation("ComboProduct")
   includedInCombos ComboItem[]         @relation("ComponentProduct")
   saleItems        SaleItem[]
@@ -191,11 +207,11 @@ model StockItem {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  balance    StockBalance?
-  packagings StockPackaging[]
-  products   Product[]
+  balance            StockBalance?
+  packagings         StockPackaging[]
+  products           Product[]
   compositionOptions CompositionOption[]
-  movements  StockMovement[]
+  movements          StockMovement[]
 
   @@index([name])
 }
@@ -317,16 +333,19 @@ model StockMovement {
 }
 
 model Sale {
-  id            String         @id @default(cuid())
-  status        SaleStatus     @default(COMPLETED)
-  paymentMethod PaymentMethod?
-  total         Decimal        @db.Decimal(12, 2)
-  notes         String?
-  createdAt     DateTime       @default(now())
-  cancelledAt   DateTime?
+  id          String        @id @default(cuid())
+  status      SaleStatus    @default(COMPLETED)
+  total       Decimal       @db.Decimal(12, 2)
+  notes       String?
+  createdAt   DateTime      @default(now())
+  cancelledAt DateTime?
+  payments    SalePayment[]
 
   userId String
   user   User   @relation(fields: [userId], references: [id])
+
+  cashRegisterId String?
+  cashRegister   CashRegister? @relation(fields: [cashRegisterId], references: [id], onDelete: SetNull)
 
   items     SaleItem[]
   movements StockMovement[]
@@ -334,7 +353,7 @@ model Sale {
   @@index([createdAt])
   @@index([userId, createdAt])
   @@index([status])
-  @@index([paymentMethod])
+  @@index([cashRegisterId])
 }
 
 model SaleItem {
@@ -374,4 +393,64 @@ model SaleItemCompositionSelection {
 
   @@index([saleItemId])
   @@index([stockItemId])
+}
+
+model CashRegister {
+  id     String             @id @default(cuid())
+  status CashRegisterStatus @default(OPEN)
+
+  // Valores do caixa
+  openingAmount  Decimal  @db.Decimal(12, 2)
+  expectedAmount Decimal? @db.Decimal(12, 2)
+  countedAmount  Decimal? @db.Decimal(12, 2)
+  difference     Decimal? @db.Decimal(12, 2)
+
+  // Datas
+  openedAt DateTime  @default(now())
+  closedAt DateTime?
+
+  // Funcionário que abriu o caixa compartilhado
+  openedById String
+  openedBy   User   @relation("CashRegisterOpener", fields: [openedById], references: [id])
+
+  // Funcionário que fechou
+  closedById String?
+  closedBy   User?   @relation("CashRegisterCloser", fields: [closedById], references: [id])
+
+  // Relações
+  movements CashMovement[]
+  sales     Sale[]
+
+  @@index([status])
+  @@index([openedById])
+  @@index([openedAt])
+}
+
+model CashMovement {
+  id          String           @id @default(cuid())
+  type        CashMovementType
+  amount      Decimal          @db.Decimal(12, 2)
+  description String?
+  createdAt   DateTime         @default(now())
+
+  cashRegisterId String
+  cashRegister   CashRegister @relation(fields: [cashRegisterId], references: [id], onDelete: Restrict)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([cashRegisterId, createdAt])
+  @@index([userId, createdAt])
+}
+
+model SalePayment {
+  id            String        @id @default(cuid())
+  paymentMethod PaymentMethod
+  amount        Decimal       @db.Decimal(12, 2)
+  createdAt     DateTime      @default(now())
+
+  saleId String
+  sale   Sale   @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@index([saleId])
 }

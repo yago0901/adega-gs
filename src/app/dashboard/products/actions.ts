@@ -34,7 +34,7 @@ function getInteger(formData: FormData, field: string) {
 }
 
 async function generateProductCode(tx: Prisma.TransactionClient) {
-  await tx.$queryRaw`SELECT pg_advisory_xact_lock(824731905)`;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(824731905)`;
 
   const products = await tx.product.findMany({
     select: {
@@ -474,15 +474,6 @@ export async function createProduct(formData: FormData) {
       ? getText(formData, "packagingParentProductId")
       : "";
 
-  if (
-    packagingMode === "CHILD" &&
-    !packagingParentProductId &&
-    !packagingChildProductId
-  ) {
-    throw new Error(
-      "Configure pelo menos um produto de origem ou um produto gerado.",
-    );
-  }
 
   const packagingParentQuantity = packagingParentProductId
     ? getOptionalNumber(formData, "packagingParentQuantity")
@@ -1212,12 +1203,10 @@ export async function updateProduct(
     }
 
     if (!isSelfPackaging) {
-      // Identifica os pais que atualmente apontam para este produto.
       const currentParentIds = currentProduct.packagingParentProducts.map(
         (parent) => parent.id,
       );
 
-      // Verifica se o novo pai já possui outro filho.
       if (packagingParentProductId) {
         const selectedParent = await tx.product.findUnique({
           where: {

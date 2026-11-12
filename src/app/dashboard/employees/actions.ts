@@ -31,6 +31,9 @@ export async function createEmployee(formData: FormData) {
 
   const submittedModules = formData.getAll("modules").map(String);
 
+  const canManageCashRegister =
+    formData.get("canManageCashRegister") === "on";
+
   if (!name || !email || !username) {
     return { error: "Preencha todos os campos obrigatórios." };
   }
@@ -102,6 +105,8 @@ export async function createEmployee(formData: FormData) {
       data: modules.map((module) => ({
         userId: createdUserId!,
         module,
+        canManageCashRegister:
+          module === "POS" && canManageCashRegister,
       })),
     });
 
@@ -135,6 +140,9 @@ export async function updateEmployee(formData: FormData) {
     .toLowerCase();
 
   const submittedModules = formData.getAll("modules").map(String);
+
+  const canManageCashRegister =
+    formData.get("canManageCashRegister") === "on";
 
   if (!id || !name || !email) {
     return { error: "Preencha todos os campos obrigatórios." };
@@ -197,6 +205,8 @@ export async function updateEmployee(formData: FormData) {
         data: modules.map((module) => ({
           userId: id,
           module,
+          canManageCashRegister:
+            module === "POS" && canManageCashRegister,
         })),
       });
     });

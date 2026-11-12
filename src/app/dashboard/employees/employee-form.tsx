@@ -23,6 +23,7 @@ type Employee = {
   email: string;
   accesses: {
     module: string;
+    canManageCashRegister: boolean;
   }[];
 };
 
@@ -202,6 +203,39 @@ export function EmployeeForm({ employee = null, onCancelEdit }: Props) {
               </div>
             </label>
           ))}
+          <label className="group block cursor-pointer">
+            <input
+              type="checkbox"
+              name="canManageCashRegister"
+              defaultChecked={
+                employee?.accesses.some(
+                  (access) =>
+                    access.module === "POS" &&
+                    access.canManageCashRegister
+                ) ?? false
+              }
+              className="peer sr-only"
+            />
+
+            <div className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-slate-300 hover:bg-slate-50 peer-checked:border-emerald-500 peer-checked:bg-emerald-50/60 peer-checked:ring-1 peer-checked:ring-emerald-500/20">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-lg text-slate-600 group-has-[:checked]:bg-emerald-100 group-has-[:checked]:text-emerald-700">
+                🔐
+              </span>
+
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-semibold text-slate-800">
+                  Gerenciar caixa
+                </span>
+                <span className="mt-1 block text-xs leading-relaxed text-slate-500">
+                  Permite abrir e fechar o caixa compartilhado da adega.
+                </span>
+              </span>
+
+              <span className="mt-1 flex h-4 w-4 shrink-0 items-center justify-center rounded border border-slate-300 text-[10px] text-transparent peer-checked:border-emerald-600 peer-checked:bg-emerald-600 peer-checked:text-white group-has-[:checked]:border-emerald-600 group-has-[:checked]:bg-emerald-600 group-has-[:checked]:text-white">
+                ✓
+              </span>
+            </div>
+          </label>
         </div>
 
         <p className="mt-3 text-xs text-slate-400">
@@ -212,11 +246,10 @@ export function EmployeeForm({ employee = null, onCancelEdit }: Props) {
       {message && (
         <div
           role="status"
-          className={`rounded-lg px-4 py-3 text-sm ${
-            message.includes("sucesso")
-              ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
-              : "border border-red-200 bg-red-50 text-red-700"
-          }`}
+          className={`rounded-lg px-4 py-3 text-sm ${message.includes("sucesso")
+            ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
+            : "border border-red-200 bg-red-50 text-red-700"
+            }`}
         >
           {message}
         </div>

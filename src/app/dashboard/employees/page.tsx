@@ -24,6 +24,7 @@ export default async function EmployeesPage() {
       accesses: {
         select: {
           module: true,
+          canManageCashRegister: true,
         },
       },
     },

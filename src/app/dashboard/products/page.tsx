@@ -10,7 +10,6 @@ export const metadata = {
   title: "Produtos | Adega GS",
 };
 
-// Parte estática da página
 export default function ProductsPage() {
   return (
     <Suspense
@@ -25,7 +24,6 @@ export default function ProductsPage() {
   );
 }
 
-// Parte dinâmica: sessão e banco de dados
 async function ProductsContent() {
   await requireModuleAccess("PRODUCTS");
 

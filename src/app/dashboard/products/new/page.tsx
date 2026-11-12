@@ -117,13 +117,13 @@ async function NewProductContent() {
             <h2 className="mb-4 font-bold">Informações básicas</h2>
 
             <div className="grid gap-4 sm:grid-cols-2">
+              
               <label className="text-sm font-medium">
-                Código *
+                Código (opcional)
                 <input
                   name="code"
-                  required
                   className="mt-2 w-full rounded-lg border border-slate-300 p-3"
-                  placeholder="Ex.: WHISKY001"
+                  placeholder="Gerado automaticamente se vazio"
                 />
               </label>
 
@@ -188,7 +188,7 @@ async function NewProductContent() {
             <h2 className="mb-4 font-bold">Valores</h2>
 
             <div className="grid gap-4 sm:grid-cols-2">
-              <label className="text-sm font-medium">
+               <label className="text-sm font-medium">
                 Preço de venda (R$) *
                 <input
                   name="salePrice"

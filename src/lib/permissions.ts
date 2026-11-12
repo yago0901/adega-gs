@@ -69,3 +69,31 @@ export async function requireAdmin() {
 
   return session;
 }
+
+export async function requireCashRegisterManagement() {
+  const session = await requireModuleAccess("POS");
+
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: {
+      role: true,
+      accesses: {
+        where: { module: "POS" },
+        select: {
+          canManageCashRegister: true,
+        },
+      },
+    },
+  });
+
+  if (
+    user?.role !== "ADMIN" &&
+    !user?.accesses.some((access) => access.canManageCashRegister)
+  ) {
+    throw new Error(
+      "Você não tem permissão para abrir ou fechar o caixa.",
+    );
+  }
+
+  return session;
+}
