@@ -12,19 +12,48 @@ export default function HistoryPage() {
   );
 }
 
+
 async function HistoryContent() {
   await requireModuleAccess("HISTORY");
 
-  const sales = await prisma.sale.findMany({
-    orderBy: { createdAt: "desc" },
-    include: {
-      user: {
-        select: { name: true },
+  const [sales, cashRegisters] = await Promise.all([
+    prisma.sale.findMany({
+      orderBy: { createdAt: "desc" },
+      include: {
+        user: {
+          select: { name: true },
+        },
+        items: true,
+        payments: true,
       },
-      items: true,
-      payments: true,
-    },
-  });
+    }),
+
+    prisma.cashRegister.findMany({
+      orderBy: { openedAt: "desc" },
+      include: {
+        openedBy: {
+          select: { name: true },
+        },
+        closedBy: {
+          select: { name: true },
+        },
+        movements: {
+          include: {
+            user: {
+              select: { name: true },
+            },
+          },
+          orderBy: { createdAt: "desc" },
+        },
+        sales: {
+          include: {
+            payments: true,
+          },
+          orderBy: { createdAt: "desc" },
+        },
+      },
+    }),
+  ]);
 
   const formattedSales = sales.map((sale) => ({
     id: sale.id,
@@ -48,5 +77,51 @@ async function HistoryContent() {
     })),
   }));
 
-  return <HistoryClient sales={formattedSales} />;
+  const formattedCashRegisters = cashRegisters.map((register) => ({
+    id: register.id,
+    status: register.status,
+    openingAmount: Number(register.openingAmount),
+    expectedAmount:
+      register.expectedAmount !== null
+        ? Number(register.expectedAmount)
+        : null,
+    countedAmount:
+      register.countedAmount !== null
+        ? Number(register.countedAmount)
+        : null,
+    difference:
+      register.difference !== null
+        ? Number(register.difference)
+        : null,
+    openedAt: register.openedAt.toISOString(),
+    closedAt: register.closedAt?.toISOString() ?? null,
+    openedBy: register.openedBy.name,
+    closedBy: register.closedBy?.name ?? null,
+    movements: register.movements.map((movement) => ({
+      id: movement.id,
+      type: movement.type,
+      amount: Number(movement.amount),
+      description: movement.description,
+      createdAt: movement.createdAt.toISOString(),
+      employee: movement.user.name,
+    })),
+    sales: register.sales.map((sale) => ({
+      id: sale.id,
+      status: sale.status,
+      total: Number(sale.total),
+      payments: sale.payments.map((payment) => ({
+        paymentMethod: payment.paymentMethod,
+        amount: Number(payment.amount),
+      })),
+      createdAt: sale.createdAt.toISOString(),
+    })),
+  }));
+
+  return (
+    <HistoryClient
+      sales={formattedSales}
+      cashRegisters={formattedCashRegisters}
+    />
+  );
 }
+

@@ -125,6 +125,15 @@ export async function openCashRegister(
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      return {
+        success: false,
+        error: "Já existe um caixa aberto.",
+      };
+    }
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2034"
     ) {
       return {
@@ -207,10 +216,6 @@ export async function closeCashRegister(
         });
 
         if (!cashRegister || cashRegister.status !== "OPEN") {
-          throw new Error("Nenhum caixa aberto foi encontrado.");
-        }
-
-        if (!cashRegister) {
           throw new Error("Nenhum caixa aberto foi encontrado.");
         }
 
@@ -344,6 +349,7 @@ export async function finalizeSale(
   items: SaleRequestItem[],
   payments: SalePaymentRequest[],
   confirmOpenings = false,
+  confirmedOpenings: Opening[] = [],
 ): Promise<SaleResult> {
   try {
     const session = await requireModuleAccess("POS");
@@ -701,6 +707,12 @@ export async function finalizeSale(
               if (!option) {
                 throw new Error(
                   `Opção inválida no grupo ${group.name}.`,
+                );
+              }
+
+              if (!option.quantity.isInteger() || option.quantity.lte(0)) {
+                throw new Error(
+                  `A quantidade da opção ${option.stockItem.name} na composição do produto ${product.name} deve ser um número inteiro positivo.`,
                 );
               }
 
@@ -1062,6 +1074,55 @@ export async function finalizeSale(
           );
         }
 
+        if (!Array.isArray(confirmedOpenings)) {
+          throw new Error("Dados de confirmação inválidos.");
+        }
+
+        function getOpeningKey(opening: Opening): string {
+          if (opening.kind === "BOTTLE") {
+            return JSON.stringify([
+              opening.kind,
+              opening.productId,
+              opening.stockItemId,
+              opening.stockItemName,
+              opening.stockPackagingId,
+              opening.packagingName,
+              opening.quantity,
+              opening.volume,
+            ]);
+          }
+
+          return JSON.stringify([
+            opening.kind,
+            opening.productId,
+            opening.productName,
+            opening.parentProductName,
+            opening.quantity,
+            opening.generatedQuantity,
+            opening.childProductName,
+          ]);
+        }
+
+        const currentOpeningKeys = openings
+          .map(getOpeningKey)
+          .sort();
+
+        const confirmedOpeningKeys = confirmedOpenings
+          .map(getOpeningKey)
+          .sort();
+
+        const openingsMatch =
+          currentOpeningKeys.length === confirmedOpeningKeys.length &&
+          currentOpeningKeys.every(
+            (key, index) => key === confirmedOpeningKeys[index],
+          );
+
+        if (!openingsMatch) {
+          throw new Error(
+            "O estoque mudou desde a prévia das aberturas. Revise as quantidades e tente novamente.",
+          );
+        }
+
         for (const opening of openings) {
           if (opening.kind === "BOTTLE") {
             await openStockBottleInTransaction(
@@ -1203,6 +1264,175 @@ export async function finalizeSale(
         error instanceof Error
           ? error.message
           : "Não foi possível finalizar a venda.",
+    };
+  }
+}
+
+export async function cancelSale(saleId: string) {
+  try {
+    const session = await requireModuleAccess("POS");
+
+    if (!saleId) {
+      return {
+        success: false,
+        error: "Venda inválida.",
+      };
+    }
+
+    await prisma.$transaction(async (tx) => {
+      const sale = await tx.sale.findUnique({
+        where: {
+          id: saleId,
+        },
+      });
+
+      if (!sale) {
+        throw new Error("Venda não encontrada.");
+      }
+
+      if (!sale.cashRegisterId) {
+        throw new Error(
+          "Esta venda não está vinculada a uma sessão de caixa e não pode ser cancelada.",
+        );
+      }
+
+      const [lockedCashRegister] = await tx.$queryRaw<{ id: string }[]>`
+        SELECT "id"
+        FROM "CashRegister"
+        WHERE "id" = ${sale.cashRegisterId}
+        FOR UPDATE
+      `;
+
+      if (!lockedCashRegister) {
+        throw new Error("A sessão de caixa desta venda não foi encontrada.");
+      }
+
+      const cashRegister = await tx.cashRegister.findUnique({
+        where: {
+          id: sale.cashRegisterId,
+        },
+        select: {
+          status: true,
+        },
+      });
+
+      if (cashRegister?.status !== "OPEN") {
+        throw new Error(
+          "Não é possível cancelar esta venda porque o caixa já foi fechado.",
+        );
+      }
+
+      if (sale.status === "CANCELLED") {
+        throw new Error("Esta venda já foi cancelada.");
+      }
+
+      const movements = await tx.stockMovement.findMany({
+        where: {
+          saleId: sale.id,
+          type: "SALE",
+        },
+      });
+
+      if (movements.length === 0) {
+        throw new Error(
+          "Não foram encontradas movimentações de estoque para esta venda. O cancelamento automático foi interrompido.",
+        );
+      }
+
+      const cancellation = await tx.sale.updateMany({
+        where: {
+          id: sale.id,
+          status: "COMPLETED",
+        },
+        data: {
+          status: "CANCELLED",
+          cancelledAt: new Date(),
+        },
+      });
+
+      if (cancellation.count !== 1) {
+        throw new Error(
+          "Esta venda já foi alterada. Atualize a página e tente novamente.",
+        );
+      }
+
+      for (const movement of movements) {
+        if (movement.quantity.greaterThanOrEqualTo(0)) {
+          throw new Error(
+            "Foi encontrada uma movimentação de venda com quantidade inválida.",
+          );
+        }
+
+        const quantityToRestore = movement.quantity.negated();
+
+        if (movement.stockPackagingId) {
+          const result = await tx.stockPackagingBalance.updateMany({
+            where: {
+              stockPackagingId: movement.stockPackagingId,
+            },
+            data: {
+              quantity: {
+                increment: quantityToRestore,
+              },
+            },
+          });
+
+          if (result.count !== 1) {
+            throw new Error(
+              `Não foi possível restaurar o estoque da embalagem ${movement.stockPackagingId}.`,
+            );
+          }
+        } else {
+          const result = await tx.stockBalance.updateMany({
+            where: {
+              stockItemId: movement.stockItemId,
+            },
+            data: {
+              quantity: {
+                increment: quantityToRestore,
+              },
+            },
+          });
+
+          if (result.count !== 1) {
+            throw new Error(
+              `Não foi possível restaurar o estoque do item ${movement.stockItemId}.`,
+            );
+          }
+        }
+
+        await tx.stockMovement.create({
+          data: {
+            type: "REVERSAL",
+            quantity: quantityToRestore,
+            unit: movement.unit,
+            userId: session.user.id,
+            reason: "Cancelamento de venda",
+            reference: sale.id,
+            stockItemId: movement.stockItemId,
+            stockPackagingId: movement.stockPackagingId,
+            saleId: sale.id,
+          },
+        });
+      }
+    });
+
+    revalidatePath("/dashboard/history");
+    revalidatePath("/dashboard/stock");
+    revalidatePath("/dashboard/stock/movements");
+    revalidatePath("/dashboard/pos");
+    revalidatePath("/dashboard");
+
+    return {
+      success: true,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Não foi possível cancelar a venda.",
     };
   }
 }

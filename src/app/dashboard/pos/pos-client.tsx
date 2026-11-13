@@ -327,6 +327,7 @@ export default function PosClient({
     saleItems: SaleRequestItem[],
     salePayments: SalePaymentRequest[],
     confirmOpenings = false,
+    confirmedOpenings: Opening[] = [],
   ) {
     startTransition(async () => {
       try {
@@ -334,9 +335,16 @@ export default function PosClient({
           saleItems,
           salePayments,
           confirmOpenings,
+          confirmedOpenings,
         );
 
         if (!result.success) {
+          if (confirmOpenings) {
+            setPendingOpenings([]);
+            setPendingSaleItems(null);
+            setPendingSalePayments(null);
+          }
+
           setSaleError(result.error);
           return;
         }
@@ -458,12 +466,18 @@ export default function PosClient({
     setSaleError("");
     if (!pendingSalePayments) return;
 
-    executeSale(pendingSaleItems, pendingSalePayments, true);
+    executeSale(
+      pendingSaleItems,
+      pendingSalePayments,
+      true,
+      pendingOpenings,
+    );
   }
 
   function handleCancelOpenings() {
     setPendingOpenings([]);
     setPendingSaleItems(null);
+    setPendingSalePayments(null);
     setMessage("Abertura de estoque cancelada. A venda não foi realizada.");
   }
 
