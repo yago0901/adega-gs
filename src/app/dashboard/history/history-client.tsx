@@ -14,6 +14,10 @@ type Sale = {
   createdAt: string;
   cancelledAt: string | null;
   employee: string;
+  customer: {
+    name: string;
+    phone: string;
+  } | null;
   items: {
     id: string;
     productName: string;
@@ -409,6 +413,19 @@ export function HistoryClient({
               </p>
               <p>
                 <strong>Funcionário:</strong> {selectedSale.employee}
+              </p>
+              <p>
+                <strong>Cliente:</strong>{" "}
+                {selectedSale.customer ? (
+                  <>
+                    {selectedSale.customer.name}
+                    <span className="text-gray-500">
+                      {" "}— {selectedSale.customer.phone}
+                    </span>
+                  </>
+                ) : (
+                  "Não informado"
+                )}
               </p>
               <div>
                 <p>

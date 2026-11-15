@@ -6,7 +6,15 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 export async function requireModuleAccess(
-  module: "POS" | "STOCK" | "EMPLOYEES" | "PRODUCTS" | "FINANCE" | "HISTORY"
+  module:
+    | "POS"
+    | "STOCK"
+    | "EMPLOYEES"
+    | "PRODUCTS"
+    | "FINANCE"
+    | "HISTORY"
+    | "CUSTOMERS"
+    | "FIADOS"
 ) {
   const session = await auth.api.getSession({
     headers: await headers(),

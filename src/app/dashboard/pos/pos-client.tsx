@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { finalizeSale, openCashRegister, closeCashRegister } from "./actions";
+import { finalizeSale, openCashRegister, closeCashRegister, registerCashSupply, registerCashWithdrawal } from "./actions";
 import OpeningConfirmationModal from "./OpeningConfirmationModal";
 import SignOutButton from "../sign-out-button";
 
@@ -94,6 +94,27 @@ const currency = new Intl.NumberFormat("pt-BR", {
   currency: "BRL",
 });
 
+type Customer = {
+  id: string;
+  name: string;
+  phone: string;
+};
+
+function parseMoneyToCents(value: string): number | null {
+  const normalized = value.trim().replace(",", ".");
+
+  if (!/^\d+(\.\d{1,2})?$/.test(normalized)) {
+    return null;
+  }
+
+  const [integer, decimal = ""] = normalized.split(".");
+
+  return (
+    Number(integer) * 100 +
+    Number(decimal.padEnd(2, "0"))
+  );
+}
+
 function getTypeLabel(type: Product["type"]) {
   switch (type) {
     case "FRACTIONAL":
@@ -109,10 +130,12 @@ function getTypeLabel(type: Product["type"]) {
 
 export default function PosClient({
   products,
+  customers,
   cashRegister,
   canManageCashRegister,
 }: {
   products: Product[];
+  customers: Customer[];
   cashRegister: CashRegister | null;
   canManageCashRegister: boolean;
 }) {
@@ -120,6 +143,7 @@ export default function PosClient({
   const [cart, setCart] = useState<CartItem[]>([]);
   const [message, setMessage] = useState("");
   const [saleError, setSaleError] = useState("");
+  const [accountAmount, setAccountAmount] = useState("0.00");
   const [payments, setPayments] = useState<SalePaymentRequest[]>([
     {
       paymentMethod: "CASH",
@@ -131,6 +155,9 @@ export default function PosClient({
   const [pendingOpenings, setPendingOpenings] = useState<Opening[]>([]);
   const [pendingSaleItems, setPendingSaleItems] = useState<SaleRequestItem[] | null>(null);
   const [pendingSalePayments, setPendingSalePayments] = useState<SalePaymentRequest[] | null>(null);
+  const [pendingSaleCustomerId, setPendingSaleCustomerId] = useState<string | null>(null);
+  const [pendingSaleAccountAmount, setPendingSaleAccountAmount] =
+    useState<string | null>(null);
   const isSaleAwaitingConfirmation = pendingSaleItems !== null;
 
   const router = useRouter();
@@ -158,6 +185,16 @@ export default function PosClient({
     };
   } | null>(null);
 
+  const [showCashMovementModal, setShowCashMovementModal] = useState(false);
+  const [cashMovementType, setCashMovementType] = useState<"SUPPLY" | "WITHDRAWAL">("SUPPLY");
+  const [cashMovementAmount, setCashMovementAmount] = useState("");
+  const [cashMovementDescription, setCashMovementDescription] = useState("");
+  const [cashMovementError, setCashMovementError] = useState("");
+  const [selectedCustomerId, setSelectedCustomerId] = useState("");
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [showCustomerOptions, setShowCustomerOptions] = useState(false);
+  const [isCashMovementPending, startCashMovementTransition] = useTransition();
+
   const availableProducts = useMemo(() => {
     const term = search.trim().toLowerCase();
 
@@ -168,29 +205,68 @@ export default function PosClient({
     );
   }, [products, search]);
 
+  const availableCustomers = useMemo(() => {
+    const term = customerSearch.trim().toLowerCase();
+
+    if (!term) return [];
+
+    return customers.filter(
+      (customer) =>
+        customer.name.toLowerCase().includes(term) ||
+        customer.phone.includes(term),
+    );
+  }, [customers, customerSearch]);
+
   const total = cart.reduce(
     (sum, item) =>
       sum + Number(item.product.salePrice) * item.quantity,
     0,
   );
 
-  const paidTotal = payments.reduce(
-    (sum, payment) => sum + Number(payment.amount.replace(",", ".") || 0),
+  const totalCents = Math.round(total * 100);
+
+  const paymentAmountsInCents = payments.map((payment) =>
+    parseMoneyToCents(payment.amount),
+  );
+
+  const accountAmountCents = parseMoneyToCents(accountAmount);
+
+  const paidTotalCents = paymentAmountsInCents.reduce<number>(
+    (sum, amount) => sum + (amount ?? 0),
     0,
   );
 
-  const remainingAmount = Math.max(0, total - paidTotal);
+  const distributedTotalCents =
+    paidTotalCents + (accountAmountCents ?? 0);
 
-  const paymentDifference = paidTotal - total;
+  const remainingAmount = Math.max(
+    0,
+    totalCents - distributedTotalCents,
+  ) / 100;
+
+  const paymentDifference =
+    (distributedTotalCents - totalCents) / 100;
+
+  const activePayments = payments.filter((payment) => {
+    const cents = parseMoneyToCents(payment.amount);
+    return cents !== null && cents > 0;
+  });
+
+  const hasDuplicatePaymentMethods =
+    new Set(activePayments.map((payment) => payment.paymentMethod)).size !==
+    activePayments.length;
+
+  const paidTotal = paidTotalCents / 100;
 
   const isPaymentValid =
-    payments.length > 0 &&
-    payments.every(
-      (payment) =>
-        Number.isFinite(Number(payment.amount.replace(",", "."))) &&
-        Number(payment.amount.replace(",", ".")) > 0,
+    paymentAmountsInCents.every(
+      (amount) => amount !== null && amount >= 0,
     ) &&
-    Math.abs(paymentDifference) < 0.001;
+    accountAmountCents !== null &&
+    accountAmountCents >= 0 &&
+    !hasDuplicatePaymentMethods &&
+    distributedTotalCents === totalCents &&
+    (accountAmountCents === 0 || Boolean(selectedCustomerId));
 
   const hasIncompleteComposition = cart.some((item) => {
     if (item.product.type !== "FRACTIONAL") return false;
@@ -328,6 +404,8 @@ export default function PosClient({
     salePayments: SalePaymentRequest[],
     confirmOpenings = false,
     confirmedOpenings: Opening[] = [],
+    customerId: string | null = selectedCustomerId || null,
+    saleAccountAmount: string = accountAmount.trim().replace(",", "."),
   ) {
     startTransition(async () => {
       try {
@@ -336,6 +414,8 @@ export default function PosClient({
           salePayments,
           confirmOpenings,
           confirmedOpenings,
+          customerId,
+          saleAccountAmount,
         );
 
         if (!result.success) {
@@ -343,6 +423,8 @@ export default function PosClient({
             setPendingOpenings([]);
             setPendingSaleItems(null);
             setPendingSalePayments(null);
+            setPendingSaleCustomerId(null);
+            setPendingSaleAccountAmount(null);
           }
 
           setSaleError(result.error);
@@ -353,6 +435,8 @@ export default function PosClient({
           setPendingOpenings(result.openings);
           setPendingSaleItems(saleItems);
           setPendingSalePayments(salePayments);
+          setPendingSaleCustomerId(customerId);
+          setPendingSaleAccountAmount(saleAccountAmount);
           return;
         }
 
@@ -366,7 +450,13 @@ export default function PosClient({
           },
         ]);
         setPendingSalePayments(null);
+        setPendingSaleCustomerId(null);
+        setSelectedCustomerId("");
+        setCustomerSearch("");
+        setShowCustomerOptions(false);
         setSearch("");
+        setAccountAmount("0.00");
+        setPendingSaleAccountAmount(null);
 
         setMessage(
           `Venda ${result.saleId} registrada! Total: ${currency.format(
@@ -429,12 +519,24 @@ export default function PosClient({
       selections: item.selections,
     }));
 
-    const salePayments = payments.map((payment) => ({
-      ...payment,
-      amount: payment.amount.trim().replace(",", "."),
-    }));
+    const salePayments = payments
+      .filter((payment) => {
+        const cents = parseMoneyToCents(payment.amount);
+        return cents !== null && cents > 0;
+      })
+      .map((payment) => ({
+        ...payment,
+        amount: payment.amount.trim().replace(",", "."),
+      }));
 
-    executeSale(saleItems, salePayments);
+    executeSale(
+      saleItems,
+      salePayments,
+      false,
+      [],
+      selectedCustomerId || null,
+      accountAmount.trim().replace(",", "."),
+    );
   }
 
   function handleCloseCashRegister() {
@@ -471,6 +573,8 @@ export default function PosClient({
       pendingSalePayments,
       true,
       pendingOpenings,
+      pendingSaleCustomerId,
+      pendingSaleAccountAmount ?? "0.00",
     );
   }
 
@@ -478,7 +582,55 @@ export default function PosClient({
     setPendingOpenings([]);
     setPendingSaleItems(null);
     setPendingSalePayments(null);
+    setPendingSaleCustomerId(null);
+    setPendingSaleAccountAmount(null);
     setMessage("Abertura de estoque cancelada. A venda não foi realizada.");
+  }
+
+  function handleOpenCashMovement(type: "SUPPLY" | "WITHDRAWAL") {
+    setCashMovementType(type);
+    setCashMovementAmount("");
+    setCashMovementDescription("");
+    setCashMovementError("");
+    setShowCashMovementModal(true);
+  }
+
+  function handleCashMovement() {
+    setCashMovementError("");
+
+    startCashMovementTransition(async () => {
+      try {
+        const result =
+          cashMovementType === "SUPPLY"
+            ? await registerCashSupply(
+              cashMovementAmount,
+              cashMovementDescription,
+            )
+            : await registerCashWithdrawal(
+              cashMovementAmount,
+              cashMovementDescription,
+            );
+
+        if (!result.success) {
+          setCashMovementError(result.error);
+          return;
+        }
+
+        setShowCashMovementModal(false);
+        setCashMovementAmount("");
+        setCashMovementDescription("");
+
+        setMessage(
+          `${cashMovementType === "SUPPLY" ? "Suprimento" : "Sangria"} registrado com sucesso! Saldo físico: ${currency.format(Number(result.balance))}`,
+        );
+
+        router.refresh();
+      } catch {
+        setCashMovementError(
+          "Não foi possível registrar a movimentação. Tente novamente.",
+        );
+      }
+    });
   }
 
   return (
@@ -572,6 +724,126 @@ export default function PosClient({
           </p>
         </div>
       )}
+
+      {showCashMovementModal && canManageCashRegister && cashRegister && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="cash-movement-title"
+            className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl"
+          >
+            <h2
+              id="cash-movement-title"
+              className="text-xl font-bold text-gray-900"
+            >
+              {cashMovementType === "SUPPLY"
+                ? "Adicionar dinheiro ao caixa"
+                : "Retirar dinheiro do caixa"}
+            </h2>
+
+            <p className="mt-2 text-sm text-gray-600">
+              {cashMovementType === "SUPPLY"
+                ? "Informe o valor que será colocado no caixa."
+                : "Informe o valor que será retirado do caixa."}
+            </p>
+
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                handleCashMovement();
+              }}
+              className="mt-5 space-y-4"
+            >
+              <div>
+                <label
+                  htmlFor="cashMovementAmount"
+                  className="mb-1 block text-sm font-medium text-gray-700"
+                >
+                  Valor (R$)
+                </label>
+
+                <input
+                  id="cashMovementAmount"
+                  type="text"
+                  inputMode="decimal"
+                  value={cashMovementAmount}
+                  onChange={(event) =>
+                    setCashMovementAmount(event.target.value)
+                  }
+                  placeholder="0,00"
+                  disabled={isCashMovementPending}
+                  required
+                  className="w-full rounded-lg border border-gray-300 px-3 py-3 text-lg text-gray-900 outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="cashMovementDescription"
+                  className="mb-1 block text-sm font-medium text-gray-700"
+                >
+                  Motivo (opcional)
+                </label>
+
+                <textarea
+                  id="cashMovementDescription"
+                  value={cashMovementDescription}
+                  onChange={(event) =>
+                    setCashMovementDescription(event.target.value)
+                  }
+                  placeholder={
+                    cashMovementType === "SUPPLY"
+                      ? "Ex.: Dinheiro para troco"
+                      : "Ex.: Retirada para o cofre"
+                  }
+                  maxLength={200}
+                  rows={3}
+                  disabled={isCashMovementPending}
+                  className="w-full resize-none rounded-lg border border-gray-300 px-3 py-2 text-gray-900 outline-none focus:border-blue-500"
+                />
+              </div>
+
+              {cashMovementError && (
+                <p role="alert" className="text-sm text-red-600">
+                  {cashMovementError}
+                </p>
+              )}
+
+              <div className="flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowCashMovementModal(false)}
+                  disabled={isCashMovementPending}
+                  className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={
+                    isCashMovementPending ||
+                    !cashMovementAmount.trim()
+                  }
+                  className={`rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 ${cashMovementType === "SUPPLY"
+                    ? "bg-green-600 hover:bg-green-700"
+                    : "bg-red-600 hover:bg-red-700"
+                    }`}
+                >
+                  {isCashMovementPending
+                    ? "Registrando..."
+                    : cashMovementType === "SUPPLY"
+                      ? "Confirmar suprimento"
+                      : "Confirmar sangria"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+
       {showCloseModal && canManageCashRegister && cashRegister && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
@@ -796,6 +1068,26 @@ export default function PosClient({
           </nav>
 
           {canManageCashRegister && cashRegister && (
+            <>
+              <button
+                type="button"
+                onClick={() => handleOpenCashMovement("SUPPLY")}
+                className="rounded-lg border border-green-200 px-4 py-2 text-sm font-semibold text-green-700 transition hover:bg-green-50"
+              >
+                + Suprimento
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleOpenCashMovement("WITHDRAWAL")}
+                className="rounded-lg border border-red-200 px-4 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-50"
+              >
+                − Sangria
+              </button>
+            </>
+          )}
+
+          {canManageCashRegister && cashRegister && (
             <button
               type="button"
               onClick={() => {
@@ -907,6 +1199,75 @@ export default function PosClient({
               <h2 className="text-lg font-bold text-gray-900">
                 Venda atual
               </h2>
+
+              <div className="mt-4 relative">
+                <label
+                  htmlFor="customerSearch"
+                  className="mb-2 block text-sm font-medium text-gray-700"
+                >
+                  Cliente (opcional)
+                </label>
+
+                <input
+                  id="customerSearch"
+                  type="text"
+                  value={customerSearch}
+                  placeholder="Buscar cliente por nome ou telefone..."
+                  disabled={isSaleAwaitingConfirmation}
+                  onChange={(event) => {
+                    setCustomerSearch(event.target.value);
+                    setSelectedCustomerId("");
+                    setShowCustomerOptions(true);
+                  }}
+                  onFocus={() => setShowCustomerOptions(true)}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500"
+                />
+
+                {showCustomerOptions && customerSearch.trim() && (
+                  <div className="absolute z-20 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
+                    {availableCustomers.length > 0 ? (
+                      availableCustomers.map((customer) => (
+                        <button
+                          key={customer.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedCustomerId(customer.id);
+                            setCustomerSearch(`${customer.name} — ${customer.phone}`);
+                            setShowCustomerOptions(false);
+                          }}
+                          className="block w-full border-b border-gray-100 px-3 py-3 text-left text-sm hover:bg-gray-50"
+                        >
+                          <span className="block font-medium text-gray-900">
+                            {customer.name}
+                          </span>
+                          <span className="text-xs text-gray-500">
+                            {customer.phone}
+                          </span>
+                        </button>
+                      ))
+                    ) : (
+                      <p className="p-3 text-sm text-gray-500">
+                        Nenhum cliente encontrado.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {selectedCustomerId && (
+                  <button
+                    type="button"
+                    disabled={isSaleAwaitingConfirmation}
+                    onClick={() => {
+                      setSelectedCustomerId("");
+                      setCustomerSearch("");
+                      setShowCustomerOptions(false);
+                    }}
+                    className="mt-2 text-xs text-red-600 hover:underline"
+                  >
+                    Remover cliente
+                  </button>
+                )}
+              </div>
 
               <div className="mt-4 space-y-4">
                 {cart.length === 0 && (
@@ -1070,11 +1431,6 @@ export default function PosClient({
                 </span>
               </div>
 
-              <p className="mt-3 text-xs text-gray-500">
-                O pagamento será realizado separadamente na maquininha
-                ou conforme o meio utilizado pela adega.
-              </p>
-
               {hasIncompleteComposition && (
                 <p className="mt-3 text-sm text-amber-700">
                   Configure todas as opções obrigatórias das doses antes de finalizar.
@@ -1087,7 +1443,7 @@ export default function PosClient({
                   <button
                     type="button"
                     onClick={handleAddPayment}
-                    disabled={payments.length >= 4}
+                    disabled={payments.length >= 4 || isSaleAwaitingConfirmation}
                     className="text-sm text-blue-600 disabled:opacity-50"
                   >
                     + Adicionar
@@ -1098,6 +1454,7 @@ export default function PosClient({
                   <div key={index} className="flex items-center gap-2">
                     <select
                       value={payment.paymentMethod}
+                      disabled={isSaleAwaitingConfirmation}
                       onChange={(event) =>
                         handlePaymentChange(
                           index,
@@ -1121,6 +1478,7 @@ export default function PosClient({
                       onChange={(event) =>
                         handlePaymentChange(index, "amount", event.target.value)
                       }
+                      disabled={isSaleAwaitingConfirmation}
                       className="w-28 rounded-md border p-2"
                     />
 
@@ -1128,6 +1486,7 @@ export default function PosClient({
                       <button
                         type="button"
                         onClick={() => handleRemovePayment(index)}
+                        disabled={isSaleAwaitingConfirmation}
                         className="text-red-600"
                         aria-label="Remover pagamento"
                       >
@@ -1137,28 +1496,68 @@ export default function PosClient({
                   </div>
                 ))}
 
-                <div className="space-y-1 text-sm">
+                <div>
+                  {selectedCustomerId && (<>
+                    <label
+                      htmlFor="accountAmount"
+                      className="mb-1 block text-sm font-medium text-gray-700"
+                    >
+                      Fiado (R$)
+                    </label>
+
+                    <input
+                      id="accountAmount"
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0,00"
+                      value={accountAmount}
+                      onChange={(event) =>
+                        setAccountAmount(event.target.value.replace(/[^\d.,]/g, ""))
+                      }
+                      disabled={isSaleAwaitingConfirmation}
+                      className="w-full rounded-md border p-2 disabled:bg-gray-100"
+                    />
+                  </>
+                  )}
+
+                  {accountAmountCents !== null && accountAmountCents > 0 && !selectedCustomerId && (
+                    <p className="mt-1 text-xs text-red-600">
+                      Selecione um cliente para registrar o fiado.
+                    </p>
+                  )}
+                </div>
+
+                <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
-                    <span>Total informado:</span>
+                    <span>Total recebido:</span>
                     <span>
-                      {paidTotal.toLocaleString("pt-BR", {
-                        style: "currency",
-                        currency: "BRL",
-                      })}
+                      {currency.format(paidTotal)}
+                    </span>
+                  </div>
+                  {selectedCustomerId && (
+                    <div className="flex justify-between">
+                      <span>Fiado:</span>
+                      <span>
+                        {currency.format((accountAmountCents ?? 0) / 100)}
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="flex justify-between border-t pt-2 font-semibold">
+                    <span>Total destinado:</span>
+                    <span>
+                      {currency.format(distributedTotalCents / 100)}
                     </span>
                   </div>
 
                   <div className="flex justify-between">
                     <span>Restante:</span>
                     <span>
-                      {remainingAmount.toLocaleString("pt-BR", {
-                        style: "currency",
-                        currency: "BRL",
-                      })}
+                      {currency.format(remainingAmount)}
                     </span>
                   </div>
 
-                  {paymentDifference > 0.001 && (
+                  {paymentDifference > 0 && (
                     <p className="text-red-600">
                       O valor informado ultrapassa o total da venda.
                     </p>

@@ -10,6 +10,8 @@ const modules = [
   { value: "STOCK", label: "Estoque", description: "Consultar e movimentar estoque", icon: "▦" },
   { value: "PRODUCTS", label: "Produtos", description: "Cadastrar e gerenciar produtos", icon: "▤" },
   { value: "HISTORY", label: "Histórico", description: "Consultar movimentações e vendas", icon: "◷" },
+  { value: "CUSTOMERS", label: "Clientes", description: "Cadastrar e consultar clientes", icon: "♙" },
+  { value: "FIADOS", label: "Fiados", description: "Consultar dívidas e registrar pagamentos", icon: "💰" },
   { value: "EMPLOYEES", label: "Funcionários", description: "Acessar o módulo de funcionários", icon: "♙" },
   { value: "FINANCE", label: "Financeiro", description: "Acessar informações financeiras", icon: "＄" },
 ];

@@ -14,6 +14,8 @@ enum Module {
   PRODUCTS
   FINANCE
   HISTORY
+  CUSTOMERS
+  FIADOS
 }
 
 enum UserRole {
@@ -50,13 +52,6 @@ enum SaleStatus {
   CANCELLED
 }
 
-enum PaymentMethod {
-  CASH
-  PIX
-  CREDIT_CARD
-  DEBIT_CARD
-}
-
 enum CashRegisterStatus {
   OPEN
   CLOSED
@@ -90,6 +85,7 @@ model User {
   openedCashRegisters CashRegister[] @relation("CashRegisterOpener")
   closedCashRegisters CashRegister[] @relation("CashRegisterCloser")
   cashMovements       CashMovement[]
+  customerAccountMovements CustomerAccountMovement[]
 }
 
 model Session {
@@ -347,6 +343,21 @@ model Sale {
   cashRegisterId String?
   cashRegister   CashRegister? @relation(fields: [cashRegisterId], references: [id], onDelete: SetNull)
 
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  accountMovements CustomerAccountMovement[]
+
+  // Endereço de entrega utilizado nesta venda
+  deliveryZipCode      String?
+  deliveryStreet       String?
+  deliveryNumber       String?
+  deliveryComplement   String?
+  deliveryNeighborhood String?
+  deliveryCity         String?
+  deliveryState         String?
+  deliveryReference    String?
+
   items     SaleItem[]
   movements StockMovement[]
 
@@ -417,6 +428,8 @@ model CashRegister {
   closedById String?
   closedBy   User?   @relation("CashRegisterCloser", fields: [closedById], references: [id])
 
+  customerAccountMovements CustomerAccountMovement[]
+
   // Relações
   movements CashMovement[]
   sales     Sale[]
@@ -453,4 +466,103 @@ model SalePayment {
   sale   Sale   @relation(fields: [saleId], references: [id], onDelete: Cascade)
 
   @@index([saleId])
+}
+
+enum PaymentMethod {
+  CASH
+  PIX
+  CREDIT_CARD
+  DEBIT_CARD
+}
+
+enum CustomerAccountMovementType {
+  DEBIT
+  CREDIT
+  REVERSAL
+}
+
+model Customer {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String
+  phoneNormalized String @unique
+
+  zipCode      String
+  street       String
+  number       String
+  complement   String?
+  neighborhood String
+  city         String
+  state        String
+  reference    String?
+
+  notes     String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sales             Sale[]
+  accountMovements  CustomerAccountMovement[]
+
+  @@index([name])
+}
+
+model CustomerAccountMovement {
+  id            String                      @id @default(cuid())
+  type          CustomerAccountMovementType
+  amount        Decimal                     @db.Decimal(12, 2)
+  description   String?
+  payments      CustomerAccountMovementPayment[]
+  createdAt     DateTime                    @default(now())
+
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  saleId String?
+  sale   Sale?   @relation(fields: [saleId], references: [id], onDelete: Restrict)
+
+  reversalOfId String? @unique
+  reversalOf   CustomerAccountMovement? @relation("AccountMovementReversal", fields: [reversalOfId], references: [id])
+  reversedBy   CustomerAccountMovement? @relation("AccountMovementReversal")
+
+  allocationsAsCredit CustomerAccountAllocation[] @relation("AllocationCredit")
+  allocationsAsDebit  CustomerAccountAllocation[] @relation("AllocationDebit")
+
+  cashRegisterId String?
+  cashRegister   CashRegister? @relation(fields: [cashRegisterId], references: [id], onDelete: Restrict)
+
+  @@index([customerId, createdAt])
+  @@index([userId, createdAt])
+  @@index([saleId])
+  @@index([cashRegisterId, createdAt])
+}
+
+model CustomerAccountAllocation {
+  id        String   @id @default(cuid())
+  amount    Decimal  @db.Decimal(12, 2)
+  createdAt DateTime @default(now())
+
+  creditMovementId String
+  creditMovement   CustomerAccountMovement @relation("AllocationCredit", fields: [creditMovementId], references: [id], onDelete: Restrict)
+
+  debitMovementId String
+  debitMovement   CustomerAccountMovement @relation("AllocationDebit", fields: [debitMovementId], references: [id], onDelete: Restrict)
+
+  @@unique([creditMovementId, debitMovementId])
+  @@index([debitMovementId])
+}
+
+model CustomerAccountMovementPayment {
+  id        String        @id @default(cuid())
+  method    PaymentMethod
+  amount    Decimal       @db.Decimal(12, 2)
+  createdAt DateTime      @default(now())
+
+  movementId String
+  movement   CustomerAccountMovement @relation(fields: [movementId], references: [id], onDelete: Restrict)
+
+  @@index([movementId])
 }

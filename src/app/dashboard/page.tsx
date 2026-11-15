@@ -15,6 +15,7 @@ const menu = [
   { label: "Dashboard", href: "/dashboard", icon: "⌂", active: true },
   { label: "Frente de caixa", href: "/dashboard/pos", icon: "▣" },
   { label: "Produtos", href: "/dashboard/products", icon: "▤" },
+  { label: "Clientes", href: "/dashboard/clients", icon: "♧" },
   { label: "Estoque", href: "/dashboard/stock", icon: "▦" },
   { label: "Funcionários", href: "/dashboard/employees", icon: "♙" },
   { label: "Financeiro", href: "/dashboard/finance", icon: "＄" },
@@ -65,6 +66,7 @@ async function DashboardContent() {
   const moduleByHref: Record<string, string> = {
     "/dashboard/pos": "POS",
     "/dashboard/products": "PRODUCTS",
+    "/dashboard/clients": "CUSTOMERS",
     "/dashboard/stock": "STOCK",
     "/dashboard/employees": "EMPLOYEES",
     "/dashboard/finance": "FINANCE",

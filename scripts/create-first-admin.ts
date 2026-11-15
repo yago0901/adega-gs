@@ -14,6 +14,7 @@ const modules = [
   "PRODUCTS",
   "FINANCE",
   "HISTORY",
+  "CUSTOMERS",
 ] as const;
 
 async function main() {
@@ -78,7 +79,7 @@ async function main() {
   console.log("\nAdministrador criado com sucesso!");
   console.log("Username: yago");
   console.log("Cargo: ADMIN");
-  console.log("Acesso aos seis módulos concedido.");
+  console.log("Acesso aos sete módulos concedido.");
 }
 
 main()

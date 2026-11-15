@@ -29,6 +29,8 @@ const moduleNames: Record<string, string> = {
   HISTORY: "Histórico",
   EMPLOYEES: "Funcionários",
   FINANCE: "Financeiro",
+  FIADOS: "Fiados",
+  CUSTOMERS: "Clientes",
 };
 
 export function EmployeeManagement({ employees }: Props) {

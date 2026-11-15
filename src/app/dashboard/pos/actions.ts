@@ -350,6 +350,8 @@ export async function finalizeSale(
   payments: SalePaymentRequest[],
   confirmOpenings = false,
   confirmedOpenings: Opening[] = [],
+  customerId: string | null = null,
+  accountAmount = "0",
 ): Promise<SaleResult> {
   try {
     const session = await requireModuleAccess("POS");
@@ -362,10 +364,10 @@ export async function finalizeSale(
       return { success: false, error: "Limite de 100 itens por venda." };
     }
 
-    if (!Array.isArray(payments) || payments.length === 0) {
+    if (!Array.isArray(payments)) {
       return {
         success: false,
-        error: "Informe pelo menos uma forma de pagamento.",
+        error: "Dados de pagamento inválidos.",
       };
     }
 
@@ -375,6 +377,27 @@ export async function finalizeSale(
         error: "Limite de 4 formas de pagamento por venda.",
       };
     }
+
+    if (
+      typeof accountAmount !== "string" ||
+      !/^\d+(\.\d{1,2})?$/.test(accountAmount.trim())
+    ) {
+      return {
+        success: false,
+        error: "O valor do fiado é inválido.",
+      };
+    }
+
+    const accountValue = new Prisma.Decimal(accountAmount.trim());
+
+    if (accountValue.lt(0) || accountValue.gt("9999999999.99")) {
+      return {
+        success: false,
+        error: "O valor do fiado é inválido.",
+      };
+    }
+
+    const paymentMethods = new Set<string>();
 
     const validPaymentMethods = [
       "CASH",
@@ -397,6 +420,15 @@ export async function finalizeSale(
           error: "Um dos pagamentos possui dados inválidos.",
         };
       }
+
+      if (paymentMethods.has(payment.paymentMethod)) {
+        return {
+          success: false,
+          error: "Não repita a mesma forma de pagamento.",
+        };
+      }
+
+      paymentMethods.add(payment.paymentMethod);
 
       const amount = new Prisma.Decimal(payment.amount);
 
@@ -457,6 +489,28 @@ export async function finalizeSale(
       }
 
       const cashRegister = lockedCashRegister;
+
+      if (customerId !== null) {
+        if (typeof customerId !== "string" || !customerId.trim()) {
+          throw new Error("Cliente inválido.");
+        }
+
+        const customer = await tx.customer.findFirst({
+          where: {
+            id: customerId,
+            active: true,
+          },
+          select: {
+            id: true,
+          },
+        });
+
+        if (!customer) {
+          throw new Error(
+            "Cliente não encontrado ou inativo. Atualize a página e tente novamente.",
+          );
+        }
+      }
 
       const products = await tx.product.findMany({
         where: {
@@ -619,9 +673,17 @@ export async function finalizeSale(
         new Prisma.Decimal(0),
       );
 
-      if (!paymentsTotal.equals(total)) {
+      const distributedTotal = paymentsTotal.plus(accountValue);
+
+      if (!distributedTotal.equals(total)) {
         throw new Error(
-          "A soma dos pagamentos precisa ser igual ao total da venda.",
+          "A soma dos pagamentos e do fiado precisa ser exatamente igual ao total da venda.",
+        );
+      }
+
+      if (accountValue.gt(0) && !customerId) {
+        throw new Error(
+          "Selecione um cliente para registrar uma venda com fiado.",
         );
       }
 
@@ -1189,6 +1251,7 @@ export async function finalizeSale(
       const createdSale = await tx.sale.create({
         data: {
           total,
+          customerId,
           userId: session.user.id,
           cashRegisterId: cashRegister.id,
 
@@ -1219,6 +1282,20 @@ export async function finalizeSale(
           },
         },
       });
+
+      if (accountValue.gt(0)) {
+        await tx.customerAccountMovement.create({
+          data: {
+            type: "DEBIT",
+            amount: accountValue,
+            description: `Fiado da venda ${createdSale.id}`,
+            customerId: customerId!,
+            userId: session.user.id,
+            saleId: createdSale.id,
+            cashRegisterId: cashRegister.id,
+          },
+        });
+      }
 
       await tx.stockMovement.createMany({
         data: finalConsumptions.map((consumption) => ({
@@ -1436,3 +1513,289 @@ export async function cancelSale(saleId: string) {
     };
   }
 }
+
+
+type CashMovementResult =
+  | { success: true; movementId: string; balance: string }
+  | { success: false; error: string };
+
+async function lockOpenCashRegister(
+  tx: Prisma.TransactionClient,
+) {
+  const [lockedCashRegister] = await tx.$queryRaw<{ id: string }[]>`
+    SELECT "id"
+    FROM "CashRegister"
+    WHERE "status" = 'OPEN'
+    LIMIT 1
+    FOR UPDATE
+  `;
+
+  if (!lockedCashRegister) {
+    throw new Error("Nenhum caixa aberto foi encontrado.");
+  }
+
+  const cashRegister = await tx.cashRegister.findUnique({
+    where: {
+      id: lockedCashRegister.id,
+    },
+  });
+
+  if (!cashRegister || cashRegister.status !== "OPEN") {
+    throw new Error("Nenhum caixa aberto foi encontrado.");
+  }
+
+  return cashRegister;
+}
+
+async function getPhysicalCashBalance(
+  tx: Prisma.TransactionClient,
+  cashRegisterId: string,
+  openingAmount: Prisma.Decimal,
+) {
+  const cashSales = await tx.salePayment.aggregate({
+    where: {
+      paymentMethod: "CASH",
+      sale: {
+        cashRegisterId,
+        status: "COMPLETED",
+      },
+    },
+    _sum: {
+      amount: true,
+    },
+  });
+
+  const movements = await tx.cashMovement.groupBy({
+    by: ["type"],
+    where: {
+      cashRegisterId,
+    },
+    _sum: {
+      amount: true,
+    },
+  });
+
+  const supplies =
+    movements.find((movement) => movement.type === "SUPPLY")
+      ?._sum.amount ?? new Prisma.Decimal(0);
+
+  const withdrawals =
+    movements.find((movement) => movement.type === "WITHDRAWAL")
+      ?._sum.amount ?? new Prisma.Decimal(0);
+
+  return openingAmount
+    .plus(cashSales._sum.amount ?? 0)
+    .plus(supplies)
+    .minus(withdrawals);
+}
+
+
+export async function registerCashSupply(
+  amountInput: string,
+  description?: string,
+): Promise<CashMovementResult> {
+  try {
+    const session = await requireCashRegisterManagement();
+
+    if (typeof amountInput !== "string") {
+      return {
+        success: false,
+        error: "Informe um valor válido.",
+      };
+    }
+
+    const normalizedAmount = amountInput.trim().replace(",", ".");
+
+    if (!/^\d+(\.\d{1,2})?$/.test(normalizedAmount)) {
+      return {
+        success: false,
+        error: "Informe um valor válido.",
+      };
+    }
+
+    const amount = new Prisma.Decimal(normalizedAmount);
+
+    if (amount.lte(0) || amount.gt("9999999999.99")) {
+      return {
+        success: false,
+        error: "O valor do suprimento é inválido.",
+      };
+    }
+
+    if (
+      description !== undefined &&
+      (typeof description !== "string" || description.trim().length > 200)
+    ) {
+      return {
+        success: false,
+        error: "A descrição deve ter no máximo 200 caracteres.",
+      };
+    }
+
+    const result = await prisma.$transaction(
+      async (tx) => {
+        const cashRegister = await lockOpenCashRegister(tx);
+
+        const movement = await tx.cashMovement.create({
+          data: {
+            type: "SUPPLY",
+            amount,
+            description: description?.trim() || null,
+            cashRegisterId: cashRegister.id,
+            userId: session.user.id,
+          },
+        });
+
+        const balance = await getPhysicalCashBalance(
+          tx,
+          cashRegister.id,
+          cashRegister.openingAmount,
+        );
+
+        return {
+          movementId: movement.id,
+          balance: balance.toString(),
+        };
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      },
+    );
+
+    revalidatePath("/dashboard/pos");
+    revalidatePath("/dashboard/history");
+
+    return {
+      success: true,
+      ...result,
+    };
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2034"
+    ) {
+      return {
+        success: false,
+        error: "O caixa foi alterado durante a operação. Tente novamente.",
+      };
+    }
+
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Não foi possível registrar o suprimento.",
+    };
+  }
+}
+
+
+export async function registerCashWithdrawal(
+  amountInput: string,
+  description?: string,
+): Promise<CashMovementResult> {
+  try {
+    const session = await requireCashRegisterManagement();
+
+    if (typeof amountInput !== "string") {
+      return {
+        success: false,
+        error: "Informe um valor válido.",
+      };
+    }
+
+    const normalizedAmount = amountInput.trim().replace(",", ".");
+
+    if (!/^\d+(\.\d{1,2})?$/.test(normalizedAmount)) {
+      return {
+        success: false,
+        error: "Informe um valor válido.",
+      };
+    }
+
+    const amount = new Prisma.Decimal(normalizedAmount);
+
+    if (amount.lte(0) || amount.gt("9999999999.99")) {
+      return {
+        success: false,
+        error: "O valor da sangria é inválido.",
+      };
+    }
+
+    if (
+      description !== undefined &&
+      (typeof description !== "string" || description.trim().length > 200)
+    ) {
+      return {
+        success: false,
+        error: "A descrição deve ter no máximo 200 caracteres.",
+      };
+    }
+
+    const result = await prisma.$transaction(
+      async (tx) => {
+        const cashRegister = await lockOpenCashRegister(tx);
+
+        const currentBalance = await getPhysicalCashBalance(
+          tx,
+          cashRegister.id,
+          cashRegister.openingAmount,
+        );
+
+        if (amount.gt(currentBalance)) {
+          throw new Error(
+            `Saldo insuficiente. Dinheiro disponível: R$ ${currentBalance.toFixed(2)}.`,
+          );
+        }
+
+        const movement = await tx.cashMovement.create({
+          data: {
+            type: "WITHDRAWAL",
+            amount,
+            description: description?.trim() || null,
+            cashRegisterId: cashRegister.id,
+            userId: session.user.id,
+          },
+        });
+
+        const newBalance = currentBalance.minus(amount);
+
+        return {
+          movementId: movement.id,
+          balance: newBalance.toString(),
+        };
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      },
+    );
+
+    revalidatePath("/dashboard/pos");
+    revalidatePath("/dashboard/history");
+
+    return {
+      success: true,
+      ...result,
+    };
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2034"
+    ) {
+      return {
+        success: false,
+        error: "O caixa foi alterado durante a operação. Tente novamente.",
+      };
+    }
+
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Não foi possível registrar a sangria.",
+    };
+  }
+}
+

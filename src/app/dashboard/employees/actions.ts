@@ -13,6 +13,8 @@ const availableModules = [
   "PRODUCTS",
   "FINANCE",
   "HISTORY",
+  "CUSTOMERS",
+  "FIADOS",
 ] as const;
 
 type EmployeeModule = (typeof availableModules)[number];

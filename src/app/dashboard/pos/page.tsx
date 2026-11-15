@@ -219,6 +219,20 @@ async function PosContent() {
     },
   });
 
+  const customers = await prisma.customer.findMany({
+    where: {
+      active: true,
+    },
+    select: {
+      id: true,
+      name: true,
+      phone: true,
+    },
+    orderBy: {
+      name: "asc",
+    },
+  });
+
   const formattedProducts = products.map((product) => {
     let stock = 0;
 
@@ -298,6 +312,7 @@ async function PosContent() {
   return (
     <PosClient
       products={formattedProducts}
+      customers={customers}
       canManageCashRegister={canManageCashRegister}
       cashRegister={
         cashRegister

@@ -23,6 +23,12 @@ async function HistoryContent() {
         user: {
           select: { name: true },
         },
+        customer: {
+          select: {
+            name: true,
+            phone: true,
+          },
+        },
         items: true,
         payments: true,
       },
@@ -75,6 +81,12 @@ async function HistoryContent() {
       unitPrice: Number(item.unitPrice),
       total: Number(item.total),
     })),
+    customer: sale.customer
+      ? {
+        name: sale.customer.name,
+        phone: sale.customer.phone,
+      }
+      : null,
   }));
 
   const formattedCashRegisters = cashRegisters.map((register) => ({
