@@ -10,6 +10,7 @@ type Sale = {
     paymentMethod: string;
     amount: number;
   }[];
+  accountAmount: number;
   total: number;
   cashReceived: number;
   changeAmount: number;
@@ -29,6 +30,23 @@ type Sale = {
     unitPrice: number;
     total: number;
   }[];
+};
+
+type DebtPayment = {
+  id: string;
+  amount: number;
+  createdAt: string;
+  employee: string;
+  customer: {
+    name: string;
+    phone: string;
+  };
+  payments: {
+    paymentMethod: string;
+    amount: number;
+  }[];
+  cashReceived: number;
+  changeAmount: number;
 };
 
 
@@ -61,6 +79,7 @@ type CashRegisterHistory = {
       paymentMethod: string;
       amount: number;
     }[];
+    accountAmount: number;
     createdAt: string;
   }[];
 };
@@ -78,14 +97,31 @@ const paymentLabels: Record<string, string> = {
   DEBIT_CARD: "Débito",
 };
 
+function getPaymentLabel(
+  payments: { paymentMethod: string; amount: number }[],
+  accountAmount: number,
+) {
+  const labels = payments.map(
+    (item) => paymentLabels[item.paymentMethod] ?? item.paymentMethod,
+  );
+
+  if (accountAmount > 0) {
+    labels.push("Fiado");
+  }
+
+  return labels.length > 0 ? labels.join(", ") : "Não informado";
+}
+
 type HistoryClientProps = {
   sales: Sale[];
   cashRegisters: CashRegisterHistory[];
+  debtPayments: DebtPayment[];
 };
 
 export function HistoryClient({
   sales,
   cashRegisters,
+  debtPayments,
 }: HistoryClientProps) {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("ALL");
@@ -96,35 +132,78 @@ export function HistoryClient({
   const [activeTab, setActiveTab] = useState<"SALES" | "CASH_REGISTERS">("SALES");
   const [selectedCashRegister, setSelectedCashRegister] =
     useState<CashRegisterHistory | null>(null);
+  const [selectedDebtPayment, setSelectedDebtPayment] =
+    useState<DebtPayment | null>(null);
 
-  const filteredSales = useMemo(() => {
+  const filteredHistoryEvents = useMemo(() => {
+    const events = [
+      ...sales.map((sale) => ({
+        type: "SALE" as const,
+        id: sale.id,
+        createdAt: sale.createdAt,
+        sale,
+      })),
+      ...debtPayments.map((debtPayment) => ({
+        type: "DEBT_PAYMENT" as const,
+        id: debtPayment.id,
+        createdAt: debtPayment.createdAt,
+        debtPayment,
+      })),
+    ];
 
-    return sales.filter((sale) => {
-      const date = sale.createdAt.slice(0, 10);
+    return events
+      .filter((event) => {
+        const date = event.createdAt.slice(0, 10);
 
-      const matchesSearch =
-        sale.id.toLowerCase().includes(search.toLowerCase()) ||
-        sale.employee.toLowerCase().includes(search.toLowerCase());
+        const employee =
+          event.type === "SALE"
+            ? event.sale.employee
+            : event.debtPayment.employee;
 
-      const matchesStatus =
-        status === "ALL" || sale.status === status;
+        const customer =
+          event.type === "SALE"
+            ? event.sale.customer?.name ?? ""
+            : event.debtPayment.customer.name;
 
-      const matchesPayment =
-        payment === "ALL" ||
-        sale.payments.some((item) => item.paymentMethod === payment);
+        const matchesSearch =
+          event.id.toLowerCase().includes(search.toLowerCase()) ||
+          employee.toLowerCase().includes(search.toLowerCase()) ||
+          customer.toLowerCase().includes(search.toLowerCase());
 
-      const matchesStart = !startDate || date >= startDate;
-      const matchesEnd = !endDate || date <= endDate;
+        const matchesStatus =
+          status === "ALL" ||
+          (event.type === "SALE" && event.sale.status === status);
 
-      return (
-        matchesSearch &&
-        matchesStatus &&
-        matchesPayment &&
-        matchesStart &&
-        matchesEnd
+        const matchesPayment =
+          payment === "ALL" ||
+          (event.type === "SALE"
+            ? payment === "FIADO"
+              ? event.sale.accountAmount > 0
+              : event.sale.payments.some(
+                (item) => item.paymentMethod === payment,
+              )
+            : payment !== "FIADO" &&
+            event.debtPayment.payments.some(
+              (item) => item.paymentMethod === payment,
+            ));
+
+        const matchesStart = !startDate || date >= startDate;
+        const matchesEnd = !endDate || date <= endDate;
+
+        return (
+          matchesSearch &&
+          matchesStatus &&
+          matchesPayment &&
+          matchesStart &&
+          matchesEnd
+        );
+      })
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() -
+          new Date(a.createdAt).getTime(),
       );
-    });
-  }, [sales, search, status, payment, startDate, endDate]);
+  }, [sales, debtPayments, search, status, payment, startDate, endDate]);
 
   const cashRegisterPaymentSummary = useMemo(() => {
     const totals: Record<string, number> = {};
@@ -188,7 +267,7 @@ export function HistoryClient({
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar venda ou funcionário"
+            placeholder="Buscar venda, cliente ou funcionário"
             className="rounded-lg border p-2 text-sm md:col-span-2"
           />
 
@@ -226,6 +305,7 @@ export function HistoryClient({
             <option value="PIX">Pix</option>
             <option value="CREDIT_CARD">Crédito</option>
             <option value="DEBIT_CARD">Débito</option>
+            <option value="FIADO">Fiado</option>
           </select>
         </section>
       )}
@@ -316,7 +396,7 @@ export function HistoryClient({
         <section className="overflow-hidden rounded-xl border border-gray-200 bg-white">
           <div className="border-b p-4">
             <p className="font-semibold">
-              {filteredSales.length} venda(s) encontrada(s)
+              {filteredHistoryEvents.length} movimentação(ões) encontrada(s)
             </p>
           </div>
 
@@ -325,7 +405,7 @@ export function HistoryClient({
               <thead className="bg-gray-50 text-gray-500">
                 <tr>
                   <th className="p-4">Data</th>
-                  <th className="p-4">Funcionário</th>
+                  <th className="p-4">Responsável / Cliente</th>
                   <th className="p-4">Pagamento</th>
                   <th className="p-4">Total</th>
                   <th className="p-4">Situação</th>
@@ -334,56 +414,115 @@ export function HistoryClient({
               </thead>
 
               <tbody>
-                {filteredSales.map((sale) => (
-                  <tr key={sale.id} className="border-t">
+                {filteredHistoryEvents.map((event) => (
+                  <tr
+                    key={`${event.type}-${event.id}`}
+                    className="border-t"
+                  >
                     <td className="p-4">
-                      {new Date(sale.createdAt).toLocaleString("pt-BR")}
+                      {new Date(event.createdAt).toLocaleString("pt-BR")}
                     </td>
-                    <td className="p-4">{sale.employee}</td>
+
                     <td className="p-4">
-                      {sale.payments.length > 0
-                        ? sale.payments
-                          .map(
-                            (item) =>
-                              paymentLabels[item.paymentMethod] ?? item.paymentMethod,
-                          )
-                          .join(", ")
-                        : "Não informado"}
+                      {event.type === "SALE" ? (
+                        <>
+                          <p>{event.sale.employee}</p>
+                          {event.sale.customer && (
+                            <p className="text-xs text-gray-500">
+                              Cliente: {event.sale.customer.name}
+                            </p>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <p>{event.debtPayment.customer.name}</p>
+                          <p className="text-xs text-gray-500">
+                            Recebido por: {event.debtPayment.employee}
+                          </p>
+                        </>
+                      )}
                     </td>
+
+                    <td className="p-4">
+                      {event.type === "SALE" ? (
+                        getPaymentLabel(
+                          event.sale.payments,
+                          event.sale.accountAmount,
+                        )
+                      ) : (
+                        <div>
+                          <span className="font-medium text-blue-700">
+                            Recebimento de fiado
+                          </span>
+                          <p className="text-xs text-gray-500">
+                            {event.debtPayment.payments
+                              .map(
+                                (item) =>
+                                  paymentLabels[item.paymentMethod] ??
+                                  item.paymentMethod,
+                              )
+                              .join(", ")}
+                          </p>
+                        </div>
+                      )}
+                    </td>
+
                     <td className="p-4 font-semibold">
-                      {currency.format(sale.total)}
+                      {currency.format(
+                        event.type === "SALE"
+                          ? event.sale.total
+                          : event.debtPayment.amount,
+                      )}
                     </td>
+
                     <td className="p-4">
-                      <span
-                        className={
-                          sale.status === "COMPLETED"
-                            ? "rounded-full bg-emerald-50 px-2 py-1 text-emerald-700"
-                            : "rounded-full bg-red-50 px-2 py-1 text-red-700"
-                        }
-                      >
-                        {sale.status === "COMPLETED"
-                          ? "Concluída"
-                          : "Cancelada"}
-                      </span>
+                      {event.type === "SALE" ? (
+                        <span
+                          className={
+                            event.sale.status === "COMPLETED"
+                              ? "rounded-full bg-emerald-50 px-2 py-1 text-emerald-700"
+                              : "rounded-full bg-red-50 px-2 py-1 text-red-700"
+                          }
+                        >
+                          {event.sale.status === "COMPLETED"
+                            ? "Concluída"
+                            : "Cancelada"}
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">
+                          Recebido
+                        </span>
+                      )}
                     </td>
+
                     <td className="p-4">
-                      <button
-                        onClick={() => setSelectedSale(sale)}
-                        className="font-medium text-blue-600 hover:underline"
-                      >
-                        Detalhes
-                      </button>
+                      {event.type === "SALE" ? (
+                        <button
+                          onClick={() => setSelectedSale(event.sale)}
+                          className="font-medium text-blue-600 hover:underline"
+                        >
+                          Detalhes
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => setSelectedDebtPayment(event.debtPayment)}
+                          className="font-medium text-blue-600 hover:underline"
+                        >
+                          Detalhes
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
 
-                {filteredSales.length === 0 && (
+                {filteredHistoryEvents.length === 0 && (
                   <tr>
                     <td colSpan={6} className="p-8 text-center text-gray-500">
-                      Nenhuma venda encontrada.
+                      Nenhuma movimentação encontrada.
                     </td>
                   </tr>
                 )}
+
               </tbody>
             </table>
           </div>
@@ -436,7 +575,7 @@ export function HistoryClient({
                   <strong>Pagamento:</strong>
                 </p>
 
-                {selectedSale.payments.length > 0 ? (
+                {selectedSale.payments.length > 0 || selectedSale.accountAmount > 0 ? (
                   <div className="ml-2">
                     {selectedSale.payments.map((item, index) => (
                       <p key={`${item.paymentMethod}-${index}`}>
@@ -444,6 +583,12 @@ export function HistoryClient({
                         {currency.format(item.amount)}
                       </p>
                     ))}
+
+                    {selectedSale.accountAmount > 0 && (
+                      <p>
+                        Fiado: {currency.format(selectedSale.accountAmount)}
+                      </p>
+                    )}
                   </div>
                 ) : (
                   <p className="ml-2">Não informado</p>
@@ -509,6 +654,97 @@ export function HistoryClient({
         </div>
       )}
 
+      {selectedDebtPayment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-lg rounded-xl bg-white p-6">
+            <div className="flex items-start justify-between">
+              <div>
+                <h2 className="text-xl font-bold">
+                  Detalhes do recebimento de fiado
+                </h2>
+
+                <p className="mt-1 break-all text-xs text-gray-500">
+                  {selectedDebtPayment.id}
+                </p>
+              </div>
+
+              <button
+                onClick={() => setSelectedDebtPayment(null)}
+                className="text-2xl text-gray-500"
+                aria-label="Fechar detalhes"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-3 text-sm">
+              <p>
+                <strong>Data:</strong>{" "}
+                {new Date(selectedDebtPayment.createdAt).toLocaleString("pt-BR")}
+              </p>
+
+              <p>
+                <strong>Cliente:</strong>{" "}
+                {selectedDebtPayment.customer.name}
+              </p>
+
+              <p>
+                <strong>Telefone:</strong>{" "}
+                {selectedDebtPayment.customer.phone || "Não informado"}
+              </p>
+
+              <p>
+                <strong>Funcionário:</strong>{" "}
+                {selectedDebtPayment.employee}
+              </p>
+
+              <div>
+                <strong>Formas de pagamento:</strong>
+
+                <div className="ml-2 mt-1">
+                  {selectedDebtPayment.payments.map((item, index) => (
+                    <p key={`${item.paymentMethod}-${index}`}>
+                      {paymentLabels[item.paymentMethod] ?? item.paymentMethod}:{" "}
+                      {currency.format(item.amount)}
+                    </p>
+                  ))}
+                </div>
+              </div>
+
+              {selectedDebtPayment.cashReceived > 0 && (
+                <div className="rounded-lg bg-gray-50 p-3">
+                  <p>
+                    <strong>Dinheiro recebido:</strong>{" "}
+                    {currency.format(selectedDebtPayment.cashReceived)}
+                  </p>
+
+                  <p>
+                    <strong>Troco devolvido:</strong>{" "}
+                    {currency.format(selectedDebtPayment.changeAmount)}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-5 border-t pt-4 text-right">
+              <p className="text-sm text-gray-500">
+                Total recebido e abatido da dívida
+              </p>
+
+              <p className="text-2xl font-bold text-emerald-700">
+                {currency.format(selectedDebtPayment.amount)}
+              </p>
+            </div>
+
+            <button
+              onClick={() => setSelectedDebtPayment(null)}
+              className="mt-5 w-full rounded-lg border px-4 py-3 font-medium hover:bg-gray-50"
+            >
+              Fechar
+            </button>
+          </div>
+        </div>
+      )}
 
       {selectedCashRegister && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -673,14 +909,17 @@ export function HistoryClient({
                       {new Date(sale.createdAt).toLocaleString("pt-BR")}
                     </p>
                     <p className="text-xs text-gray-500">
-                      {sale.payments.length > 0
-                        ? sale.payments
-                          .map(
+                      {getPaymentLabel(sale.payments, sale.accountAmount) === "Não informado"
+                        ? "Pagamento não informado"
+                        : [
+                          ...sale.payments.map(
                             (item) =>
-                              `${paymentLabels[item.paymentMethod] ?? item.paymentMethod}: ${currency.format(item.amount)}`
-                          )
-                          .join(" • ")
-                        : "Pagamento não informado"}
+                              `${paymentLabels[item.paymentMethod] ?? item.paymentMethod}: ${currency.format(item.amount)}`,
+                          ),
+                          ...(sale.accountAmount > 0
+                            ? [`Fiado: ${currency.format(sale.accountAmount)}`]
+                            : []),
+                        ].join(" • ")}
                     </p>
 
                     {sale.cashReceived > 0 && (

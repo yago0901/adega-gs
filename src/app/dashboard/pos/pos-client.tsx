@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { finalizeSale, openCashRegister, closeCashRegister, registerCashSupply, registerCashWithdrawal } from "./actions";
 import OpeningConfirmationModal from "./OpeningConfirmationModal";
+import ReceiveDebtModal from "./ReceiveDebtModal";
 import SignOutButton from "../sign-out-button";
 
 type CompositionOption = {
@@ -171,12 +172,20 @@ export default function PosClient({
   const [isClosingPending, startClosingTransition] = useTransition();
 
   const [activeView, setActiveView] = useState<"SALES" | "DELIVERIES">("SALES");
+  const [showReceiveDebtModal, setShowReceiveDebtModal] = useState(false);
 
   const [closeSummary, setCloseSummary] = useState<{
     expectedAmount: string;
     countedAmount: string;
     difference: string;
     paymentTotals: {
+      cash: string;
+      pix: string;
+      creditCard: string;
+      debitCard: string;
+      total: string;
+    };
+    debtPaymentTotals: {
       cash: string;
       pix: string;
       creditCard: string;
@@ -566,6 +575,7 @@ export default function PosClient({
         countedAmount: result.countedAmount,
         difference: result.difference,
         paymentTotals: result.paymentTotals,
+        debtPaymentTotals: result.debtPaymentTotals,
       });
 
       setShowCloseModal(false);
@@ -972,6 +982,46 @@ export default function PosClient({
                   </strong>
                 </div>
               </div>
+              <div className="space-y-2 border-b border-gray-200 pb-3">
+                <h3 className="text-sm font-semibold text-gray-800">
+                  Recebimentos de fiados
+                </h3>
+
+                {[
+                  { label: "Dinheiro", value: closeSummary.debtPaymentTotals.cash },
+                  { label: "PIX", value: closeSummary.debtPaymentTotals.pix },
+                  { label: "Crédito", value: closeSummary.debtPaymentTotals.creditCard },
+                  { label: "Débito", value: closeSummary.debtPaymentTotals.debitCard },
+                ].map((payment) => (
+                  <div
+                    key={payment.label}
+                    className="flex justify-between gap-4"
+                  >
+                    <span className="text-sm text-gray-600">
+                      {payment.label}
+                    </span>
+                    <strong className="text-sm text-gray-900">
+                      {Number(payment.value).toLocaleString("pt-BR", {
+                        style: "currency",
+                        currency: "BRL",
+                      })}
+                    </strong>
+                  </div>
+                ))}
+
+                <div className="flex justify-between gap-4 border-t border-gray-200 pt-2">
+                  <span className="text-sm font-semibold text-gray-700">
+                    Total recebido
+                  </span>
+                  <strong className="text-gray-900">
+                    {Number(closeSummary.debtPaymentTotals.total).toLocaleString("pt-BR", {
+                      style: "currency",
+                      currency: "BRL",
+                    })}
+                  </strong>
+                </div>
+              </div>
+
               <div className="flex justify-between gap-4">
                 <span className="text-sm text-gray-600">
                   Dinheiro esperado
@@ -1078,6 +1128,16 @@ export default function PosClient({
             </button>
           </nav>
 
+          {activeView === "SALES" && cashRegister && (
+            <button
+              type="button"
+              onClick={() => setShowReceiveDebtModal(true)}
+              className="rounded-lg border border-blue-200 px-4 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-50"
+            >
+              Pagar Fiado
+            </button>
+          )}
+
           {canManageCashRegister && cashRegister && (
             <>
               <button
@@ -1140,6 +1200,25 @@ export default function PosClient({
         onConfirm={handleConfirmOpenings}
         onCancel={handleCancelOpenings}
       />
+
+      {showReceiveDebtModal && cashRegister && activeView === "SALES" && (
+        <ReceiveDebtModal
+          customers={customers}
+          onClose={() => setShowReceiveDebtModal(false)}
+          onSuccess={(result) => {
+            setShowReceiveDebtModal(false);
+
+            setMessage(
+              `Recebimento de ${currency.format(Number(result.amountPaid))} registrado com sucesso!${Number(result.changeAmount) > 0
+                ? ` Troco: ${currency.format(Number(result.changeAmount))}`
+                : ""
+              }`,
+            );
+
+            router.refresh();
+          }}
+        />
+      )}
 
       {activeView === "SALES" ? (
         cashRegister ? (

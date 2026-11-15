@@ -18,6 +18,7 @@ const menu = [
   { label: "Clientes", href: "/dashboard/clients", icon: "♧" },
   { label: "Estoque", href: "/dashboard/stock", icon: "▦" },
   { label: "Funcionários", href: "/dashboard/employees", icon: "♙" },
+  { label: "Fiados", href: "/dashboard/fiados", icon: "▧" },
   { label: "Financeiro", href: "/dashboard/finance", icon: "＄" },
   { label: "Histórico", href: "/dashboard/history", icon: "◷" },
 ];
@@ -69,6 +70,7 @@ async function DashboardContent() {
     "/dashboard/clients": "CUSTOMERS",
     "/dashboard/stock": "STOCK",
     "/dashboard/employees": "EMPLOYEES",
+    "/dashboard/fiados": "FIADOS",
     "/dashboard/finance": "FINANCE",
     "/dashboard/history": "HISTORY",
   };

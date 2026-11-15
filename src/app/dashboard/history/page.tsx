@@ -16,7 +16,7 @@ export default function HistoryPage() {
 async function HistoryContent() {
   await requireModuleAccess("HISTORY");
 
-  const [sales, cashRegisters] = await Promise.all([
+  const [sales, cashRegisters, debtPayments] = await Promise.all([
     prisma.sale.findMany({
       orderBy: { createdAt: "desc" },
       include: {
@@ -31,6 +31,10 @@ async function HistoryContent() {
         },
         items: true,
         payments: true,
+        accountMovements: {
+          where: { type: "DEBIT" },
+          select: { amount: true },
+        },
       },
     }),
 
@@ -54,9 +58,35 @@ async function HistoryContent() {
         sales: {
           include: {
             payments: true,
+            accountMovements: {
+              where: { type: "DEBIT" },
+              select: { amount: true },
+            },
           },
-          orderBy: { createdAt: "desc" },
         },
+      },
+    }),
+
+    prisma.customerAccountMovement.findMany({
+      where: {
+        type: "CREDIT",
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      include: {
+        user: {
+          select: {
+            name: true,
+          },
+        },
+        customer: {
+          select: {
+            name: true,
+            phone: true,
+          },
+        },
+        payments: true,
       },
     }),
   ]);
@@ -68,6 +98,10 @@ async function HistoryContent() {
       paymentMethod: payment.paymentMethod,
       amount: Number(payment.amount),
     })),
+    accountAmount: sale.accountMovements.reduce(
+      (sum, movement) => sum + Number(movement.amount),
+      0,
+    ),
     total: Number(sale.total),
     cashReceived: Number(sale.cashReceived),
     changeAmount: Number(sale.changeAmount),
@@ -89,6 +123,23 @@ async function HistoryContent() {
         phone: sale.customer.phone,
       }
       : null,
+  }));
+
+  const formattedDebtPayments = debtPayments.map((movement) => ({
+    id: movement.id,
+    amount: Number(movement.amount),
+    createdAt: movement.createdAt.toISOString(),
+    employee: movement.user.name,
+    customer: {
+      name: movement.customer.name,
+      phone: movement.customer.phone,
+    },
+    payments: movement.payments.map((payment) => ({
+      paymentMethod: payment.method,
+      amount: Number(payment.amount),
+    })),
+    cashReceived: Number(movement.cashReceived),
+    changeAmount: Number(movement.changeAmount),
   }));
 
   const formattedCashRegisters = cashRegisters.map((register) => ({
@@ -129,6 +180,10 @@ async function HistoryContent() {
         paymentMethod: payment.paymentMethod,
         amount: Number(payment.amount),
       })),
+      accountAmount: sale.accountMovements.reduce(
+        (sum, movement) => sum + Number(movement.amount),
+        0,
+      ),
       createdAt: sale.createdAt.toISOString(),
     })),
   }));
@@ -137,6 +192,7 @@ async function HistoryContent() {
     <HistoryClient
       sales={formattedSales}
       cashRegisters={formattedCashRegisters}
+      debtPayments={formattedDebtPayments}
     />
   );
 }
