@@ -69,6 +69,8 @@ async function HistoryContent() {
       amount: Number(payment.amount),
     })),
     total: Number(sale.total),
+    cashReceived: Number(sale.cashReceived),
+    changeAmount: Number(sale.changeAmount),
     createdAt: sale.createdAt.toISOString(),
     cancelledAt: sale.cancelledAt?.toISOString() ?? null,
     employee: sale.user.name,
@@ -121,6 +123,8 @@ async function HistoryContent() {
       id: sale.id,
       status: sale.status,
       total: Number(sale.total),
+      cashReceived: Number(sale.cashReceived),
+      changeAmount: Number(sale.changeAmount),
       payments: sale.payments.map((payment) => ({
         paymentMethod: payment.paymentMethod,
         amount: Number(payment.amount),

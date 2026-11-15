@@ -239,13 +239,24 @@ export default function PosClient({
   const distributedTotalCents =
     paidTotalCents + (accountAmountCents ?? 0);
 
-  const remainingAmount = Math.max(
-    0,
-    totalCents - distributedTotalCents,
-  ) / 100;
+  const cashReceivedCents = payments.reduce((sum, payment) => {
+    if (payment.paymentMethod !== "CASH") return sum;
 
-  const paymentDifference =
-    (distributedTotalCents - totalCents) / 100;
+    return sum + (parseMoneyToCents(payment.amount) ?? 0);
+  }, 0);
+
+  const changeAmountCents = Math.max(
+    0,
+    distributedTotalCents - totalCents,
+  );
+
+  const hasInvalidChange =
+    changeAmountCents > cashReceivedCents;
+
+  const remainingAmount =
+    Math.max(0, totalCents - distributedTotalCents) / 100;
+
+  const changeAmount = changeAmountCents / 100;
 
   const activePayments = payments.filter((payment) => {
     const cents = parseMoneyToCents(payment.amount);
@@ -265,9 +276,9 @@ export default function PosClient({
     accountAmountCents !== null &&
     accountAmountCents >= 0 &&
     !hasDuplicatePaymentMethods &&
-    distributedTotalCents === totalCents &&
+    distributedTotalCents >= totalCents &&
+    !hasInvalidChange &&
     (accountAmountCents === 0 || Boolean(selectedCustomerId));
-
   const hasIncompleteComposition = cart.some((item) => {
     if (item.product.type !== "FRACTIONAL") return false;
 
@@ -1529,11 +1540,10 @@ export default function PosClient({
 
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
-                    <span>Total recebido:</span>
-                    <span>
-                      {currency.format(paidTotal)}
-                    </span>
+                    <span>Total informado:</span>
+                    <span>{currency.format(paidTotal)}</span>
                   </div>
+
                   {selectedCustomerId && (
                     <div className="flex justify-between">
                       <span>Fiado:</span>
@@ -1550,16 +1560,25 @@ export default function PosClient({
                     </span>
                   </div>
 
-                  <div className="flex justify-between">
-                    <span>Restante:</span>
-                    <span>
-                      {currency.format(remainingAmount)}
-                    </span>
-                  </div>
+                  {remainingAmount > 0 && (
+                    <div className="flex justify-between text-amber-700">
+                      <span>Restante:</span>
+                      <span>{currency.format(remainingAmount)}</span>
+                    </div>
+                  )}
 
-                  {paymentDifference > 0 && (
-                    <p className="text-red-600">
-                      O valor informado ultrapassa o total da venda.
+                  {changeAmountCents > 0 && !hasInvalidChange && (
+                    <div className="flex justify-between rounded-lg bg-green-50 p-3 font-bold text-green-700">
+                      <span>Troco:</span>
+                      <span>{currency.format(changeAmount)}</span>
+                    </div>
+                  )}
+
+                  {hasInvalidChange && (
+                    <p className="rounded-lg bg-red-50 p-3 text-red-700">
+                      O troco de {currency.format(changeAmount)} precisa ser coberto
+                      integralmente pelo pagamento em dinheiro. PIX e cartões não
+                      podem gerar troco.
                     </p>
                   )}
                 </div>

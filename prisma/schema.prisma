@@ -346,6 +346,9 @@ model Sale {
   customerId String?
   customer   Customer? @relation(fields: [customerId], references: [id], onDelete: Restrict)
 
+  cashReceived Decimal @default(0) @db.Decimal(12, 2)
+  changeAmount Decimal @default(0) @db.Decimal(12, 2)
+
   accountMovements CustomerAccountMovement[]
 
   // Endereço de entrega utilizado nesta venda
@@ -530,6 +533,9 @@ model CustomerAccountMovement {
 
   allocationsAsCredit CustomerAccountAllocation[] @relation("AllocationCredit")
   allocationsAsDebit  CustomerAccountAllocation[] @relation("AllocationDebit")
+
+  cashReceived Decimal @default(0) @db.Decimal(12, 2)
+  changeAmount Decimal @default(0) @db.Decimal(12, 2)
 
   cashRegisterId String?
   cashRegister   CashRegister? @relation(fields: [cashRegisterId], references: [id], onDelete: Restrict)

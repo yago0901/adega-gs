@@ -11,6 +11,8 @@ type Sale = {
     amount: number;
   }[];
   total: number;
+  cashReceived: number;
+  changeAmount: number;
   createdAt: string;
   cancelledAt: string | null;
   employee: string;
@@ -53,6 +55,8 @@ type CashRegisterHistory = {
     id: string;
     status: "COMPLETED" | "CANCELLED";
     total: number;
+    cashReceived: number;
+    changeAmount: number;
     payments: {
       paymentMethod: string;
       amount: number;
@@ -445,6 +449,20 @@ export function HistoryClient({
                   <p className="ml-2">Não informado</p>
                 )}
               </div>
+              {selectedSale.cashReceived > 0 && (
+                <div className="rounded-lg bg-gray-50 p-3">
+                  <p>
+                    <strong>Dinheiro recebido:</strong>{" "}
+                    {currency.format(selectedSale.cashReceived)}
+                  </p>
+
+                  <p>
+                    <strong>Troco devolvido:</strong>{" "}
+                    {currency.format(selectedSale.changeAmount)}
+                  </p>
+                </div>
+              )}
+
               <p>
                 <strong>Situação:</strong>{" "}
                 {selectedSale.status === "COMPLETED"
@@ -664,6 +682,14 @@ export function HistoryClient({
                           .join(" • ")
                         : "Pagamento não informado"}
                     </p>
+
+                    {sale.cashReceived > 0 && (
+                      <p className="mt-1 text-xs text-gray-500">
+                        Dinheiro recebido: {currency.format(sale.cashReceived)}
+                        {" • "}
+                        Troco: {currency.format(sale.changeAmount)}
+                      </p>
+                    )}
                   </div>
 
                   <div className="text-right">

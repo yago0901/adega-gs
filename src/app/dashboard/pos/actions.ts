@@ -675,11 +675,50 @@ export async function finalizeSale(
 
       const distributedTotal = paymentsTotal.plus(accountValue);
 
-      if (!distributedTotal.equals(total)) {
+      if (distributedTotal.lt(total)) {
         throw new Error(
-          "A soma dos pagamentos e do fiado precisa ser exatamente igual ao total da venda.",
+          "O valor recebido e o fiado não podem ser inferiores ao total da venda.",
         );
       }
+
+      const cashReceived = payments.reduce(
+        (sum, payment) =>
+          payment.paymentMethod === "CASH"
+            ? sum.plus(payment.amount.trim())
+            : sum,
+        new Prisma.Decimal(0),
+      );
+
+      const changeAmount = distributedTotal.minus(total);
+
+      if (
+        changeAmount.gt(0) &&
+        (cashReceived.lte(0) || changeAmount.gt(cashReceived))
+      ) {
+        throw new Error(
+          "O troco só pode ser devolvido em dinheiro. Verifique os valores informados.",
+        );
+      }
+
+      const cashApplied = cashReceived.minus(changeAmount);
+
+      const normalizedPayments = payments.flatMap((payment) => {
+        const amount =
+          payment.paymentMethod === "CASH"
+            ? cashApplied
+            : new Prisma.Decimal(payment.amount.trim());
+
+        if (amount.lte(0)) {
+          return [];
+        }
+
+        return [
+          {
+            paymentMethod: payment.paymentMethod,
+            amount,
+          },
+        ];
+      });
 
       if (accountValue.gt(0) && !customerId) {
         throw new Error(
@@ -1254,12 +1293,11 @@ export async function finalizeSale(
           customerId,
           userId: session.user.id,
           cashRegisterId: cashRegister.id,
+          cashReceived,
+          changeAmount,
 
           payments: {
-            create: payments.map((payment) => ({
-              paymentMethod: payment.paymentMethod,
-              amount: new Prisma.Decimal(payment.amount.trim()),
-            })),
+            create: normalizedPayments,
           },
 
           items: {
