@@ -16,6 +16,7 @@ enum Module {
   HISTORY
   CUSTOMERS
   FIADOS
+  MOTOBOYS
 }
 
 enum UserRole {
@@ -48,6 +49,7 @@ enum StockMovementType {
 }
 
 enum SaleStatus {
+  PENDING_DELIVERY
   COMPLETED
   CANCELLED
 }
@@ -60,6 +62,23 @@ enum CashRegisterStatus {
 enum CashMovementType {
   SUPPLY
   WITHDRAWAL
+}
+
+enum DeliveryStatus {
+  PENDING
+  OUT_FOR_DELIVERY
+  COMPLETED
+  CANCELLED
+}
+
+enum DeliveryPaymentType {
+  PREPAID
+  TO_COLLECT
+}
+
+enum DeliveryCancellationResolution {
+  REFUND
+  CUSTOMER_CREDIT
 }
 
 model User {
@@ -81,10 +100,15 @@ model User {
   accesses       UserModuleAccess[]
   stockMovements StockMovement[]
   sales          Sale[]
+  cashMovements  CashMovement[]
 
-  openedCashRegisters CashRegister[] @relation("CashRegisterOpener")
-  closedCashRegisters CashRegister[] @relation("CashRegisterCloser")
-  cashMovements       CashMovement[]
+  openedCashRegisters           CashRegister[] @relation("CashRegisterOpener")
+  closedCashRegisters           CashRegister[] @relation("CashRegisterCloser")
+  dispatchedDeliveries          Delivery[]     @relation("DeliveryDispatcher")
+  returnedDeliveries            Delivery[]     @relation("DeliveryReturner")
+  cancelledDeliveries           Delivery[]     @relation("DeliveryCanceller")
+  resolvedDeliveryCancellations Delivery[]     @relation("DeliveryCancellationResolver")
+
   customerAccountMovements CustomerAccountMovement[]
 }
 
@@ -336,6 +360,7 @@ model Sale {
   createdAt   DateTime      @default(now())
   cancelledAt DateTime?
   payments    SalePayment[]
+  delivery    Delivery?
 
   userId String
   user   User   @relation(fields: [userId], references: [id])
@@ -358,7 +383,7 @@ model Sale {
   deliveryComplement   String?
   deliveryNeighborhood String?
   deliveryCity         String?
-  deliveryState         String?
+  deliveryState        String?
   deliveryReference    String?
 
   items     SaleItem[]
@@ -485,9 +510,9 @@ enum CustomerAccountMovementType {
 }
 
 model Customer {
-  id        String   @id @default(cuid())
-  name      String
-  phone     String
+  id              String @id @default(cuid())
+  name            String
+  phone           String
   phoneNormalized String @unique
 
   zipCode      String
@@ -504,19 +529,33 @@ model Customer {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  sales             Sale[]
-  accountMovements  CustomerAccountMovement[]
+  sales            Sale[]
+  accountMovements CustomerAccountMovement[]
+
+  @@index([name])
+}
+
+model Motoboy {
+  id              String     @id @default(cuid())
+  name            String
+  phone           String
+  phoneNormalized String     @unique
+  notes           String?
+  active          Boolean    @default(true)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  deliveries      Delivery[]
 
   @@index([name])
 }
 
 model CustomerAccountMovement {
-  id            String                      @id @default(cuid())
-  type          CustomerAccountMovementType
-  amount        Decimal                     @db.Decimal(12, 2)
-  description   String?
-  payments      CustomerAccountMovementPayment[]
-  createdAt     DateTime                    @default(now())
+  id          String                           @id @default(cuid())
+  type        CustomerAccountMovementType
+  amount      Decimal                          @db.Decimal(12, 2)
+  description String?
+  payments    CustomerAccountMovementPayment[]
+  createdAt   DateTime                         @default(now())
 
   customerId String
   customer   Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
@@ -527,12 +566,14 @@ model CustomerAccountMovement {
   saleId String?
   sale   Sale?   @relation(fields: [saleId], references: [id], onDelete: Restrict)
 
-  reversalOfId String? @unique
+  reversalOfId String?                  @unique
   reversalOf   CustomerAccountMovement? @relation("AccountMovementReversal", fields: [reversalOfId], references: [id])
   reversedBy   CustomerAccountMovement? @relation("AccountMovementReversal")
 
   allocationsAsCredit CustomerAccountAllocation[] @relation("AllocationCredit")
   allocationsAsDebit  CustomerAccountAllocation[] @relation("AllocationDebit")
+  deliveryCreditForId String?                     @unique
+  deliveryCreditFor   Delivery?                   @relation("DeliveryCancellationCredit", fields: [deliveryCreditForId], references: [id], onDelete: Restrict)
 
   cashReceived Decimal @default(0) @db.Decimal(12, 2)
   changeAmount Decimal @default(0) @db.Decimal(12, 2)
@@ -571,4 +612,72 @@ model CustomerAccountMovementPayment {
   movement   CustomerAccountMovement @relation(fields: [movementId], references: [id], onDelete: Restrict)
 
   @@index([movementId])
+}
+
+model Delivery {
+  id     String         @id @default(cuid())
+  status DeliveryStatus @default(PENDING)
+
+  // Taxa definida na operação e incluída no total da venda
+  fee Decimal @default(0) @db.Decimal(12, 2)
+
+  // Previsão de dinheiro entregue pelo cliente e troco
+  predictedCashReceived Decimal @default(0) @db.Decimal(12, 2)
+  predictedChangeAmount Decimal @default(0) @db.Decimal(12, 2)
+
+  // Saída
+  dispatchedAt   DateTime?
+  dispatchedById String?
+  dispatchedBy   User?     @relation("DeliveryDispatcher", fields: [dispatchedById], references: [id])
+
+  // Retorno
+  returnedAt   DateTime?
+  returnedById String?
+  returnedBy   User?     @relation("DeliveryReturner", fields: [returnedById], references: [id])
+
+  // Cancelamento
+  cancelledAt              DateTime?
+  cancellationReason       String?
+  cancellationResolution   DeliveryCancellationResolution?
+  cancellationRefundAmount Decimal?                        @db.Decimal(12, 2)
+  cancellationResolvedAt   DateTime?
+
+  cancelledById String?
+  cancelledBy   User?   @relation("DeliveryCanceller", fields: [cancelledById], references: [id])
+
+  cancellationResolvedById String?
+  cancellationResolvedBy   User?   @relation("DeliveryCancellationResolver", fields: [cancellationResolvedById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Uma única entrega por venda
+  saleId String @unique
+  sale   Sale   @relation(fields: [saleId], references: [id], onDelete: Restrict)
+
+  motoboyId String?
+  motoboy   Motoboy? @relation(fields: [motoboyId], references: [id], onDelete: Restrict)
+
+  payments DeliveryPayment[]
+
+  // Crédito criado caso a entrega seja cancelada
+  cancellationCreditMovement CustomerAccountMovement? @relation("DeliveryCancellationCredit")
+
+  @@index([status, createdAt])
+  @@index([motoboyId])
+}
+
+model DeliveryPayment {
+  id String @id @default(cuid())
+
+  type   DeliveryPaymentType
+  method PaymentMethod
+  amount Decimal             @db.Decimal(12, 2)
+
+  createdAt DateTime @default(now())
+
+  deliveryId String
+  delivery   Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+
+  @@index([deliveryId])
 }

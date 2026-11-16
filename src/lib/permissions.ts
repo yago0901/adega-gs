@@ -15,6 +15,7 @@ export async function requireModuleAccess(
     | "HISTORY"
     | "CUSTOMERS"
     | "FIADOS"
+    | "MOTOBOYS"
 ) {
   const session = await auth.api.getSession({
     headers: await headers(),

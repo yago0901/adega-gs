@@ -20,6 +20,7 @@ const menu = [
   { label: "Funcionários", href: "/dashboard/employees", icon: "♙" },
   { label: "Fiados", href: "/dashboard/fiados", icon: "▧" },
   { label: "Financeiro", href: "/dashboard/finance", icon: "＄" },
+  { label: "Motoboys", href: "/dashboard/motoboys", icon: "🏍️" },
   { label: "Histórico", href: "/dashboard/history", icon: "◷" },
 ];
 
@@ -72,6 +73,7 @@ async function DashboardContent() {
     "/dashboard/employees": "EMPLOYEES",
     "/dashboard/fiados": "FIADOS",
     "/dashboard/finance": "FINANCE",
+    "/dashboard/motoboys": "MOTOBOYS",
     "/dashboard/history": "HISTORY",
   };
 

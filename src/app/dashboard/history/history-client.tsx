@@ -5,7 +5,7 @@ import Link from "next/link";
 
 type Sale = {
   id: string;
-  status: "COMPLETED" | "CANCELLED";
+  status: "PENDING_DELIVERY" | "COMPLETED" | "CANCELLED";
   payments: {
     paymentMethod: string;
     amount: number;
@@ -71,7 +71,7 @@ type CashRegisterHistory = {
   }[];
   sales: {
     id: string;
-    status: "COMPLETED" | "CANCELLED";
+    status: "PENDING_DELIVERY" | "COMPLETED" | "CANCELLED";
     total: number;
     cashReceived: number;
     changeAmount: number;
@@ -293,6 +293,7 @@ export function HistoryClient({
             <option value="ALL">Todas as situações</option>
             <option value="COMPLETED">Concluídas</option>
             <option value="CANCELLED">Canceladas</option>
+            <option value="PENDING_DELIVERY">Aguardando entrega</option>
           </select>
 
           <select
@@ -481,12 +482,16 @@ export function HistoryClient({
                           className={
                             event.sale.status === "COMPLETED"
                               ? "rounded-full bg-emerald-50 px-2 py-1 text-emerald-700"
-                              : "rounded-full bg-red-50 px-2 py-1 text-red-700"
+                              : event.sale.status === "CANCELLED"
+                                ? "rounded-full bg-red-50 px-2 py-1 text-red-700"
+                                : "rounded-full bg-amber-50 px-2 py-1 text-amber-700"
                           }
                         >
                           {event.sale.status === "COMPLETED"
                             ? "Concluída"
-                            : "Cancelada"}
+                            : event.sale.status === "CANCELLED"
+                              ? "Cancelada"
+                              : "Aguardando entrega"}
                         </span>
                       ) : (
                         <span className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">
@@ -612,7 +617,9 @@ export function HistoryClient({
                 <strong>Situação:</strong>{" "}
                 {selectedSale.status === "COMPLETED"
                   ? "Concluída"
-                  : "Cancelada"}
+                  : selectedSale.status === "CANCELLED"
+                    ? "Cancelada"
+                    : "Aguardando entrega"}
               </p>
             </div>
 
@@ -939,10 +946,16 @@ export function HistoryClient({
                       className={
                         sale.status === "COMPLETED"
                           ? "text-xs text-emerald-600"
-                          : "text-xs text-red-600"
+                          : sale.status === "CANCELLED"
+                            ? "text-xs text-red-600"
+                            : "text-xs text-amber-600"
                       }
                     >
-                      {sale.status === "COMPLETED" ? "Concluída" : "Cancelada"}
+                      {sale.status === "COMPLETED"
+                        ? "Concluída"
+                        : sale.status === "CANCELLED"
+                          ? "Cancelada"
+                          : "Aguardando entrega"}
                     </p>
                   </div>
                 </div>

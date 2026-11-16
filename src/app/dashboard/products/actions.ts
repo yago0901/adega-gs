@@ -239,6 +239,76 @@ export async function createCategory(formData: FormData) {
   revalidatePath("/dashboard/products");
 }
 
+
+export async function deleteCategory(
+  categoryId: string,
+  targetCategoryId?: string,
+) {
+  await requireModuleAccess("PRODUCTS");
+
+  if (!categoryId) {
+    throw new Error("Categoria inválida.");
+  }
+
+  if (targetCategoryId === categoryId) {
+    throw new Error(
+      "Selecione uma categoria diferente da que será excluída.",
+    );
+  }
+
+  await prisma.$transaction(
+    async (tx) => {
+      const category = await tx.category.findUnique({
+        where: { id: categoryId },
+        select: { id: true },
+      });
+
+      if (!category) {
+        throw new Error("Categoria não encontrada.");
+      }
+
+      const productsCount = await tx.product.count({
+        where: { categoryId },
+      });
+
+      if (productsCount > 0) {
+        if (!targetCategoryId) {
+          throw new Error(
+            "Esta categoria possui produtos. Selecione outra categoria para transferi-los.",
+          );
+        }
+
+        const targetCategory = await tx.category.findUnique({
+          where: { id: targetCategoryId },
+          select: { id: true },
+        });
+
+        if (!targetCategory) {
+          throw new Error("Categoria de destino não encontrada.");
+        }
+
+        await tx.product.updateMany({
+          where: { categoryId },
+          data: { categoryId: targetCategoryId },
+        });
+      }
+
+      await tx.category.delete({
+        where: { id: categoryId },
+      });
+    },
+    {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    },
+  );
+
+  revalidatePath("/dashboard/products/new");
+  revalidatePath("/dashboard/products");
+  revalidatePath("/dashboard/pos");
+  revalidatePath("/dashboard");
+}
+
+
 export async function createProduct(formData: FormData) {
   const session = await requireModuleAccess("PRODUCTS");
 

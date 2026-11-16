@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { requireModuleAccess } from "@/lib/permissions";
 import { createCategory, createProduct } from "../actions";
 import { ProductTypeFields } from "./product-type-fields";
+import { CategoryManager } from "./category-manager";
 
 export default async function NewProductPage() {
   return (
@@ -64,6 +65,22 @@ async function NewProductContent() {
     }),
   ]);
 
+  const categoryProducts = await prisma.product.findMany({
+    where: {
+      categoryId: {
+        in: categories.map((category) => category.id),
+      },
+    },
+    orderBy: {
+      name: "asc",
+    },
+    select: {
+      id: true,
+      name: true,
+      categoryId: true,
+    },
+  });
+
   const comboProducts = products.map((product) => ({
     id: product.id,
     name: product.name,
@@ -117,7 +134,7 @@ async function NewProductContent() {
             <h2 className="mb-4 font-bold">Informações básicas</h2>
 
             <div className="grid gap-4 sm:grid-cols-2">
-              
+
               <label className="text-sm font-medium">
                 Código (opcional)
                 <input
@@ -188,7 +205,7 @@ async function NewProductContent() {
             <h2 className="mb-4 font-bold">Valores</h2>
 
             <div className="grid gap-4 sm:grid-cols-2">
-               <label className="text-sm font-medium">
+              <label className="text-sm font-medium">
                 Preço de venda (R$) *
                 <input
                   name="salePrice"
@@ -271,16 +288,10 @@ async function NewProductContent() {
                 Categorias cadastradas
               </p>
 
-              <div className="flex flex-wrap gap-2">
-                {categories.map((category) => (
-                  <span
-                    key={category.id}
-                    className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-600"
-                  >
-                    {category.name}
-                  </span>
-                ))}
-              </div>
+              <CategoryManager
+                categories={categories}
+                products={categoryProducts}
+              />
             </div>
           )}
         </div>

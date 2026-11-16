@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { finalizeSale, openCashRegister, closeCashRegister, registerCashSupply, registerCashWithdrawal } from "./actions";
 import OpeningConfirmationModal from "./OpeningConfirmationModal";
@@ -99,6 +99,36 @@ type Customer = {
   id: string;
   name: string;
   phone: string;
+  zipCode: string;
+  street: string;
+  number: string;
+  complement: string | null;
+  neighborhood: string;
+  city: string;
+  state: string;
+  reference: string | null;
+};
+
+type DeliveryAddress = {
+  zipCode: string;
+  street: string;
+  number: string;
+  complement: string;
+  neighborhood: string;
+  city: string;
+  state: string;
+  reference: string;
+};
+
+const emptyDeliveryAddress: DeliveryAddress = {
+  zipCode: "",
+  street: "",
+  number: "",
+  complement: "",
+  neighborhood: "",
+  city: "",
+  state: "",
+  reference: "",
 };
 
 function parseMoneyToCents(value: string): number | null {
@@ -140,6 +170,9 @@ export default function PosClient({
   cashRegister: CashRegister | null;
   canManageCashRegister: boolean;
 }) {
+
+  const router = useRouter();
+
   const [search, setSearch] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
   const [message, setMessage] = useState("");
@@ -161,7 +194,10 @@ export default function PosClient({
     useState<string | null>(null);
   const isSaleAwaitingConfirmation = pendingSaleItems !== null;
 
-  const router = useRouter();
+  const [pendingSaleIsDelivery, setPendingSaleIsDelivery] = useState(false);
+  const [pendingSaleDeliveryAddress, setPendingSaleDeliveryAddress] =
+    useState<DeliveryAddress | null>(null);
+
 
   const [openingAmount, setOpeningAmount] = useState("0,00");
   const [openingError, setOpeningError] = useState("");
@@ -173,6 +209,15 @@ export default function PosClient({
 
   const [activeView, setActiveView] = useState<"SALES" | "DELIVERIES">("SALES");
   const [showReceiveDebtModal, setShowReceiveDebtModal] = useState(false);
+  const [isDelivery, setIsDelivery] = useState(false);
+  const [temporaryAddress, setTemporaryAddress] =
+    useState<DeliveryAddress | null>(null);
+
+  const [showTemporaryAddressModal, setShowTemporaryAddressModal] =
+    useState(false);
+
+  const [temporaryAddressDraft, setTemporaryAddressDraft] =
+    useState<DeliveryAddress>(emptyDeliveryAddress);
 
   const [closeSummary, setCloseSummary] = useState<{
     expectedAmount: string;
@@ -226,6 +271,25 @@ export default function PosClient({
     );
   }, [customers, customerSearch]);
 
+  const selectedCustomer = customers.find(
+    (customer) => customer.id === selectedCustomerId,
+  );
+
+  const currentDeliveryAddress: DeliveryAddress | null =
+    temporaryAddress ??
+    (selectedCustomer
+      ? {
+        zipCode: selectedCustomer.zipCode,
+        street: selectedCustomer.street,
+        number: selectedCustomer.number,
+        complement: selectedCustomer.complement ?? "",
+        neighborhood: selectedCustomer.neighborhood,
+        city: selectedCustomer.city,
+        state: selectedCustomer.state,
+        reference: selectedCustomer.reference ?? "",
+      }
+      : null);
+
   const total = cart.reduce(
     (sum, item) =>
       sum + Number(item.product.salePrice) * item.quantity,
@@ -278,16 +342,20 @@ export default function PosClient({
 
   const paidTotal = paidTotalCents / 100;
 
-  const isPaymentValid =
-    paymentAmountsInCents.every(
-      (amount) => amount !== null && amount >= 0,
-    ) &&
-    accountAmountCents !== null &&
-    accountAmountCents >= 0 &&
-    !hasDuplicatePaymentMethods &&
-    distributedTotalCents >= totalCents &&
-    !hasInvalidChange &&
-    (accountAmountCents === 0 || Boolean(selectedCustomerId));
+  const isPaymentValid = isDelivery
+    ? Boolean(selectedCustomerId && currentDeliveryAddress)
+    : (
+      paymentAmountsInCents.every(
+        (amount) => amount !== null && amount >= 0,
+      ) &&
+      accountAmountCents !== null &&
+      accountAmountCents >= 0 &&
+      !hasDuplicatePaymentMethods &&
+      distributedTotalCents >= totalCents &&
+      !hasInvalidChange &&
+      (accountAmountCents === 0 || Boolean(selectedCustomerId))
+    );
+
   const hasIncompleteComposition = cart.some((item) => {
     if (item.product.type !== "FRACTIONAL") return false;
 
@@ -426,6 +494,8 @@ export default function PosClient({
     confirmedOpenings: Opening[] = [],
     customerId: string | null = selectedCustomerId || null,
     saleAccountAmount: string = accountAmount.trim().replace(",", "."),
+    saleIsDelivery = false,
+    saleDeliveryAddress: DeliveryAddress | null = null,
   ) {
     startTransition(async () => {
       try {
@@ -436,6 +506,8 @@ export default function PosClient({
           confirmedOpenings,
           customerId,
           saleAccountAmount,
+          saleIsDelivery,
+          saleDeliveryAddress,
         );
 
         if (!result.success) {
@@ -445,6 +517,8 @@ export default function PosClient({
             setPendingSalePayments(null);
             setPendingSaleCustomerId(null);
             setPendingSaleAccountAmount(null);
+            setPendingSaleIsDelivery(false);
+            setPendingSaleDeliveryAddress(null);
           }
 
           setSaleError(result.error);
@@ -457,6 +531,8 @@ export default function PosClient({
           setPendingSalePayments(salePayments);
           setPendingSaleCustomerId(customerId);
           setPendingSaleAccountAmount(saleAccountAmount);
+          setPendingSaleIsDelivery(saleIsDelivery);
+          setPendingSaleDeliveryAddress(saleDeliveryAddress);
           return;
         }
 
@@ -477,6 +553,11 @@ export default function PosClient({
         setSearch("");
         setAccountAmount("0.00");
         setPendingSaleAccountAmount(null);
+        setPendingSaleIsDelivery(false);
+        setPendingSaleDeliveryAddress(null);
+
+        setIsDelivery(false);
+        setTemporaryAddress(null);
 
         setMessage(
           `Venda ${result.saleId} registrada! Total: ${currency.format(
@@ -533,21 +614,28 @@ export default function PosClient({
     setMessage("");
     setSaleError("");
 
+    if (isDelivery && !currentDeliveryAddress) {
+      setSaleError("Informe um endereço válido para a entrega.");
+      return;
+    }
+
     const saleItems = cart.map((item) => ({
       productId: item.product.id,
       quantity: item.quantity,
       selections: item.selections,
     }));
 
-    const salePayments = payments
-      .filter((payment) => {
-        const cents = parseMoneyToCents(payment.amount);
-        return cents !== null && cents > 0;
-      })
-      .map((payment) => ({
-        ...payment,
-        amount: payment.amount.trim().replace(",", "."),
-      }));
+    const salePayments = isDelivery
+      ? []
+      : payments
+        .filter((payment) => {
+          const cents = parseMoneyToCents(payment.amount);
+          return cents !== null && cents > 0;
+        })
+        .map((payment) => ({
+          ...payment,
+          amount: payment.amount.trim().replace(",", "."),
+        }));
 
     executeSale(
       saleItems,
@@ -555,7 +643,9 @@ export default function PosClient({
       false,
       [],
       selectedCustomerId || null,
-      accountAmount.trim().replace(",", "."),
+      isDelivery ? "0" : accountAmount.trim().replace(",", "."),
+      isDelivery,
+      isDelivery ? currentDeliveryAddress : null,
     );
   }
 
@@ -587,6 +677,7 @@ export default function PosClient({
 
     setMessage("");
     setSaleError("");
+
     if (!pendingSalePayments) return;
 
     executeSale(
@@ -596,6 +687,8 @@ export default function PosClient({
       pendingOpenings,
       pendingSaleCustomerId,
       pendingSaleAccountAmount ?? "0.00",
+      pendingSaleIsDelivery,
+      pendingSaleDeliveryAddress,
     );
   }
 
@@ -605,6 +698,8 @@ export default function PosClient({
     setPendingSalePayments(null);
     setPendingSaleCustomerId(null);
     setPendingSaleAccountAmount(null);
+    setPendingSaleIsDelivery(false);
+    setPendingSaleDeliveryAddress(null);
     setMessage("Abertura de estoque cancelada. A venda não foi realizada.");
   }
 
@@ -652,6 +747,15 @@ export default function PosClient({
         );
       }
     });
+  }
+
+  function handleSaveTemporaryAddress(
+    event: FormEvent<HTMLFormElement>,
+  ) {
+    event.preventDefault();
+
+    setTemporaryAddress(temporaryAddressDraft);
+    setShowTemporaryAddressModal(false);
   }
 
   return (
@@ -1201,6 +1305,193 @@ export default function PosClient({
         onCancel={handleCancelOpenings}
       />
 
+      {showTemporaryAddressModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="temporary-address-title"
+            className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-6 shadow-xl"
+          >
+            <h2
+              id="temporary-address-title"
+              className="text-xl font-bold text-gray-900"
+            >
+              Endereço temporário
+            </h2>
+
+            <p className="mt-2 text-sm text-gray-600">
+              Informe o endereço onde esta venda deverá ser entregue.
+              O endereço principal do cliente não será alterado.
+            </p>
+
+            <form
+              onSubmit={handleSaveTemporaryAddress}
+              className="mt-5 space-y-4"
+            >
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    CEP *
+                  </label>
+                  <input
+                    value={temporaryAddressDraft.zipCode}
+                    onChange={(event) =>
+                      setTemporaryAddressDraft((current) => ({
+                        ...current,
+                        zipCode: event.target.value,
+                      }))
+                    }
+                    required
+                    maxLength={9}
+                    placeholder="00000-000"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    Número *
+                  </label>
+                  <input
+                    value={temporaryAddressDraft.number}
+                    onChange={(event) =>
+                      setTemporaryAddressDraft((current) => ({
+                        ...current,
+                        number: event.target.value,
+                      }))
+                    }
+                    required
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Rua *
+                </label>
+                <input
+                  value={temporaryAddressDraft.street}
+                  onChange={(event) =>
+                    setTemporaryAddressDraft((current) => ({
+                      ...current,
+                      street: event.target.value,
+                    }))
+                  }
+                  required
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Complemento
+                </label>
+                <input
+                  value={temporaryAddressDraft.complement}
+                  onChange={(event) =>
+                    setTemporaryAddressDraft((current) => ({
+                      ...current,
+                      complement: event.target.value,
+                    }))
+                  }
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Bairro *
+                </label>
+                <input
+                  value={temporaryAddressDraft.neighborhood}
+                  onChange={(event) =>
+                    setTemporaryAddressDraft((current) => ({
+                      ...current,
+                      neighborhood: event.target.value,
+                    }))
+                  }
+                  required
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2">
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    Cidade *
+                  </label>
+                  <input
+                    value={temporaryAddressDraft.city}
+                    onChange={(event) =>
+                      setTemporaryAddressDraft((current) => ({
+                        ...current,
+                        city: event.target.value,
+                      }))
+                    }
+                    required
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    UF *
+                  </label>
+                  <input
+                    value={temporaryAddressDraft.state}
+                    onChange={(event) =>
+                      setTemporaryAddressDraft((current) => ({
+                        ...current,
+                        state: event.target.value.toUpperCase(),
+                      }))
+                    }
+                    required
+                    maxLength={2}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm uppercase outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Ponto de referência
+                </label>
+                <textarea
+                  value={temporaryAddressDraft.reference}
+                  onChange={(event) =>
+                    setTemporaryAddressDraft((current) => ({
+                      ...current,
+                      reference: event.target.value,
+                    }))
+                  }
+                  rows={2}
+                  className="w-full resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowTemporaryAddressModal(false)}
+                  className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                >
+                  Cancelar
+                </button>
+
+                <button
+                  type="submit"
+                  className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                >
+                  Salvar endereço
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {showReceiveDebtModal && cashRegister && activeView === "SALES" && (
         <ReceiveDebtModal
           customers={customers}
@@ -1307,6 +1598,8 @@ export default function PosClient({
                   onChange={(event) => {
                     setCustomerSearch(event.target.value);
                     setSelectedCustomerId("");
+                    setIsDelivery(false);
+                    setTemporaryAddress(null);
                     setShowCustomerOptions(true);
                   }}
                   onFocus={() => setShowCustomerOptions(true)}
@@ -1323,6 +1616,8 @@ export default function PosClient({
                           onClick={() => {
                             setSelectedCustomerId(customer.id);
                             setCustomerSearch(`${customer.name} — ${customer.phone}`);
+                            setTemporaryAddress(null);
+                            setIsDelivery(false);
                             setShowCustomerOptions(false);
                           }}
                           className="block w-full border-b border-gray-100 px-3 py-3 text-left text-sm hover:bg-gray-50"
@@ -1351,11 +1646,96 @@ export default function PosClient({
                       setSelectedCustomerId("");
                       setCustomerSearch("");
                       setShowCustomerOptions(false);
+                      setIsDelivery(false);
+                      setTemporaryAddress(null);
                     }}
                     className="mt-2 text-xs text-red-600 hover:underline"
                   >
                     Remover cliente
                   </button>
+                )}
+
+                {selectedCustomer && (
+                  <div className="mt-3 space-y-3 rounded-lg border border-gray-200 p-3">
+                    <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-gray-800">
+                      <input
+                        type="checkbox"
+                        checked={isDelivery}
+                        disabled={isSaleAwaitingConfirmation}
+                        onChange={(event) => setIsDelivery(event.target.checked)}
+                        className="h-4 w-4 rounded border-gray-300 text-blue-600"
+                      />
+                      Enviar para entrega
+                    </label>
+
+                    {isDelivery && currentDeliveryAddress && (
+                      <div className="space-y-2 border-t border-gray-100 pt-3">
+                        <div>
+                          <p className="text-xs font-semibold uppercase text-gray-500">
+                            Endereço da entrega
+                          </p>
+
+                          <p className="mt-1 text-sm text-gray-800">
+                            {currentDeliveryAddress.street},{" "}
+                            {currentDeliveryAddress.number}
+                            {currentDeliveryAddress.complement &&
+                              ` — ${currentDeliveryAddress.complement}`}
+                          </p>
+
+                          <p className="text-sm text-gray-600">
+                            {currentDeliveryAddress.neighborhood} —{" "}
+                            {currentDeliveryAddress.city}/
+                            {currentDeliveryAddress.state}
+                          </p>
+
+                          <p className="text-sm text-gray-600">
+                            CEP: {currentDeliveryAddress.zipCode}
+                          </p>
+
+                          {currentDeliveryAddress.reference && (
+                            <p className="mt-1 text-xs text-gray-500">
+                              Referência: {currentDeliveryAddress.reference}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap gap-3">
+                          <button
+                            type="button"
+                            disabled={isSaleAwaitingConfirmation}
+                            onClick={() => {
+                              setTemporaryAddressDraft(
+                                temporaryAddress ?? emptyDeliveryAddress,
+                              );
+                              setShowTemporaryAddressModal(true);
+                            }}
+                            className="text-xs font-medium text-blue-600 hover:underline disabled:opacity-50"
+                          >
+                            {temporaryAddress
+                              ? "Editar endereço temporário"
+                              : "Informar endereço temporário"}
+                          </button>
+
+                          {temporaryAddress && (
+                            <button
+                              type="button"
+                              disabled={isSaleAwaitingConfirmation}
+                              onClick={() => setTemporaryAddress(null)}
+                              className="text-xs font-medium text-gray-600 hover:underline disabled:opacity-50"
+                            >
+                              Usar endereço principal
+                            </button>
+                          )}
+                        </div>
+
+                        {temporaryAddress && (
+                          <p className="text-xs text-blue-700">
+                            Endereço temporário — será utilizado somente nesta venda.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -1526,142 +1906,157 @@ export default function PosClient({
                   Configure todas as opções obrigatórias das doses antes de finalizar.
                 </p>
               )}
-              <div className="space-y-3 border-t pt-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-semibold">Formas de pagamento</h3>
 
-                  <button
-                    type="button"
-                    onClick={handleAddPayment}
-                    disabled={payments.length >= 4 || isSaleAwaitingConfirmation}
-                    className="text-sm text-blue-600 disabled:opacity-50"
-                  >
-                    + Adicionar
-                  </button>
-                </div>
+              {!isDelivery && (
+                <div className="space-y-3 border-t pt-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-semibold">Formas de pagamento</h3>
 
-                {payments.map((payment, index) => (
-                  <div key={index} className="flex items-center gap-2">
-                    <select
-                      value={payment.paymentMethod}
-                      disabled={isSaleAwaitingConfirmation}
-                      onChange={(event) =>
-                        handlePaymentChange(
-                          index,
-                          "paymentMethod",
-                          event.target.value,
-                        )
-                      }
-                      className="min-w-0 flex-1 rounded-md border p-2"
+                    <button
+                      type="button"
+                      onClick={handleAddPayment}
+                      disabled={payments.length >= 4 || isSaleAwaitingConfirmation}
+                      className="text-sm text-blue-600 disabled:opacity-50"
                     >
-                      <option value="CASH">Dinheiro</option>
-                      <option value="PIX">PIX</option>
-                      <option value="CREDIT_CARD">Cartão de crédito</option>
-                      <option value="DEBIT_CARD">Cartão de débito</option>
-                    </select>
+                      + Adicionar
+                    </button>
+                  </div>
 
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      placeholder="Valor"
-                      value={payment.amount}
-                      onChange={(event) =>
-                        handlePaymentChange(index, "amount", event.target.value)
-                      }
-                      disabled={isSaleAwaitingConfirmation}
-                      className="w-28 rounded-md border p-2"
-                    />
-
-                    {payments.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => handleRemovePayment(index)}
+                  {payments.map((payment, index) => (
+                    <div key={index} className="flex items-center gap-2">
+                      <select
+                        value={payment.paymentMethod}
                         disabled={isSaleAwaitingConfirmation}
-                        className="text-red-600"
-                        aria-label="Remover pagamento"
+                        onChange={(event) =>
+                          handlePaymentChange(
+                            index,
+                            "paymentMethod",
+                            event.target.value,
+                          )
+                        }
+                        className="min-w-0 flex-1 rounded-md border p-2"
                       >
-                        Remover
-                      </button>
+                        <option value="CASH">Dinheiro</option>
+                        <option value="PIX">PIX</option>
+                        <option value="CREDIT_CARD">Cartão de crédito</option>
+                        <option value="DEBIT_CARD">Cartão de débito</option>
+                      </select>
+
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="Valor"
+                        value={payment.amount}
+                        onChange={(event) =>
+                          handlePaymentChange(index, "amount", event.target.value)
+                        }
+                        disabled={isSaleAwaitingConfirmation}
+                        className="w-28 rounded-md border p-2"
+                      />
+
+                      {payments.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemovePayment(index)}
+                          disabled={isSaleAwaitingConfirmation}
+                          className="text-red-600"
+                          aria-label="Remover pagamento"
+                        >
+                          Remover
+                        </button>
+                      )}
+                    </div>
+                  ))}
+
+                  <div>
+                    {selectedCustomerId && (<>
+                      <label
+                        htmlFor="accountAmount"
+                        className="mb-1 block text-sm font-medium text-gray-700"
+                      >
+                        Fiado (R$)
+                      </label>
+
+                      <input
+                        id="accountAmount"
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="0,00"
+                        value={accountAmount}
+                        onChange={(event) =>
+                          setAccountAmount(event.target.value.replace(/[^\d.,]/g, ""))
+                        }
+                        disabled={isSaleAwaitingConfirmation}
+                        className="w-full rounded-md border p-2 disabled:bg-gray-100"
+                      />
+                    </>
+                    )}
+
+                    {accountAmountCents !== null && accountAmountCents > 0 && !selectedCustomerId && (
+                      <p className="mt-1 text-xs text-red-600">
+                        Selecione um cliente para registrar o fiado.
+                      </p>
                     )}
                   </div>
-                ))}
 
-                <div>
-                  {selectedCustomerId && (<>
-                    <label
-                      htmlFor="accountAmount"
-                      className="mb-1 block text-sm font-medium text-gray-700"
-                    >
-                      Fiado (R$)
-                    </label>
-
-                    <input
-                      id="accountAmount"
-                      type="text"
-                      inputMode="decimal"
-                      placeholder="0,00"
-                      value={accountAmount}
-                      onChange={(event) =>
-                        setAccountAmount(event.target.value.replace(/[^\d.,]/g, ""))
-                      }
-                      disabled={isSaleAwaitingConfirmation}
-                      className="w-full rounded-md border p-2 disabled:bg-gray-100"
-                    />
-                  </>
-                  )}
-
-                  {accountAmountCents !== null && accountAmountCents > 0 && !selectedCustomerId && (
-                    <p className="mt-1 text-xs text-red-600">
-                      Selecione um cliente para registrar o fiado.
-                    </p>
-                  )}
-                </div>
-
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span>Total informado:</span>
-                    <span>{currency.format(paidTotal)}</span>
-                  </div>
-
-                  {selectedCustomerId && (
+                  <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
-                      <span>Fiado:</span>
+                      <span>Total informado:</span>
+                      <span>{currency.format(paidTotal)}</span>
+                    </div>
+
+                    {selectedCustomerId && (
+                      <div className="flex justify-between">
+                        <span>Fiado:</span>
+                        <span>
+                          {currency.format((accountAmountCents ?? 0) / 100)}
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="flex justify-between border-t pt-2 font-semibold">
+                      <span>Total destinado:</span>
                       <span>
-                        {currency.format((accountAmountCents ?? 0) / 100)}
+                        {currency.format(distributedTotalCents / 100)}
                       </span>
                     </div>
-                  )}
 
-                  <div className="flex justify-between border-t pt-2 font-semibold">
-                    <span>Total destinado:</span>
-                    <span>
-                      {currency.format(distributedTotalCents / 100)}
-                    </span>
+                    {remainingAmount > 0 && (
+                      <div className="flex justify-between text-amber-700">
+                        <span>Restante:</span>
+                        <span>{currency.format(remainingAmount)}</span>
+                      </div>
+                    )}
+
+                    {changeAmountCents > 0 && !hasInvalidChange && (
+                      <div className="flex justify-between rounded-lg bg-green-50 p-3 font-bold text-green-700">
+                        <span>Troco:</span>
+                        <span>{currency.format(changeAmount)}</span>
+                      </div>
+                    )}
+
+                    {hasInvalidChange && (
+                      <p className="rounded-lg bg-red-50 p-3 text-red-700">
+                        O troco de {currency.format(changeAmount)} precisa ser coberto
+                        integralmente pelo pagamento em dinheiro. PIX e cartões não
+                        podem gerar troco.
+                      </p>
+                    )}
                   </div>
-
-                  {remainingAmount > 0 && (
-                    <div className="flex justify-between text-amber-700">
-                      <span>Restante:</span>
-                      <span>{currency.format(remainingAmount)}</span>
-                    </div>
-                  )}
-
-                  {changeAmountCents > 0 && !hasInvalidChange && (
-                    <div className="flex justify-between rounded-lg bg-green-50 p-3 font-bold text-green-700">
-                      <span>Troco:</span>
-                      <span>{currency.format(changeAmount)}</span>
-                    </div>
-                  )}
-
-                  {hasInvalidChange && (
-                    <p className="rounded-lg bg-red-50 p-3 text-red-700">
-                      O troco de {currency.format(changeAmount)} precisa ser coberto
-                      integralmente pelo pagamento em dinheiro. PIX e cartões não
-                      podem gerar troco.
-                    </p>
-                  )}
                 </div>
-              </div>
+              )}
+
+              {isDelivery && (
+                <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3">
+                  <p className="text-sm font-semibold text-blue-800">
+                    Venda para entrega
+                  </p>
+                  <p className="mt-1 text-sm text-blue-700">
+                    Os pagamentos, valores antecipados e eventual troco serão
+                    informados na operação de entrega.
+                  </p>
+                </div>
+              )}
 
               <button
                 type="button"

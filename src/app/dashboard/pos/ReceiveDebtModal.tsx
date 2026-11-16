@@ -8,11 +8,9 @@ import {
   useState,
   useTransition,
 } from "react";
-import {
-  getCustomerOpenDebts,
-  receiveCustomerDebtPayment,
-} from "./actions";
+
 import { FiadoActions } from "../fiados/fiado-actions";
+import { getCustomerOpenDebts, receiveCustomerDebtPayment } from "./customer-account-actions";
 
 type Customer = {
   id: string;
