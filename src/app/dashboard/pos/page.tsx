@@ -1,79 +1,14 @@
 
 import { Suspense } from "react";
 
-import { prisma } from "@/lib/prisma";
 import { requireModuleAccess } from "@/lib/permissions";
+import { loadPosPageData } from "@/modules/pos/queries";
 
 import PosClient from "./pos-client";
 
 export const metadata = {
   title: "Frente de Caixa | Adega GS",
 };
-
-type PosProductType =
-  | "STANDARD"
-  | "SUPPLY"
-  | "FRACTIONAL"
-  | "COMBO";
-
-function getDirectStock(
-  stockItem: {
-    balance: { quantity: { toString(): string } } | null;
-  } | null,
-  stockPackaging: {
-    balance: { quantity: { toString(): string } } | null;
-  } | null,
-) {
-  if (stockPackaging) {
-    return Number(stockPackaging.balance?.quantity.toString() ?? 0);
-  }
-
-  return Number(stockItem?.balance?.quantity.toString() ?? 0);
-}
-
-function getOptionAvailability(option: {
-  quantity: { toString(): string };
-  stockItem: {
-    balance: { quantity: { toString(): string } } | null;
-  };
-}) {
-  const required = Number(option.quantity.toString());
-  const available = Number(
-    option.stockItem.balance?.quantity.toString() ?? 0,
-  );
-
-  if (required <= 0) return 0;
-
-  return Math.max(0, Math.floor(available / required));
-}
-
-function getCompositionAvailability(
-  groups: {
-    minSelections: number;
-    options: {
-      quantity: { toString(): string };
-      stockItem: {
-        balance: { quantity: { toString(): string } } | null;
-      };
-    }[];
-  }[],
-) {
-  const requiredGroups = groups.filter(
-    (group) => group.minSelections > 0,
-  );
-
-  if (requiredGroups.length === 0) return 0;
-
-  const groupAvailabilities = requiredGroups.map((group) => {
-    if (group.options.length === 0) return 0;
-
-    return Math.max(
-      ...group.options.map(getOptionAvailability),
-    );
-  });
-
-  return Math.min(...groupAvailabilities);
-}
 
 export default function PosPage() {
   return (
@@ -92,245 +27,23 @@ export default function PosPage() {
 async function PosContent() {
   const session = await requireModuleAccess("POS");
 
-  const user = await prisma.user.findUnique({
-    where: {
-      id: session.user.id,
-    },
-    select: {
-      role: true,
-      accesses: {
-        where: {
-          module: "POS",
-        },
-        select: {
-          canManageCashRegister: true,
-        },
-      },
-    },
-  });
-
-  const canManageCashRegister =
-    user?.role === "ADMIN" ||
-    user?.accesses.some(
-      (access) => access.canManageCashRegister,
-    ) === true;
-
-  const cashRegister = await prisma.cashRegister.findFirst({
-    where: {
-      status: "OPEN",
-    },
-    select: {
-      id: true,
-      openingAmount: true,
-      openedAt: true,
-    },
-  });
-
-  const products = await prisma.product.findMany({
-    where: {
-      active: true,
-      type: {
-        in: ["STANDARD", "SUPPLY", "FRACTIONAL", "COMBO"],
-      },
-    },
-    include: {
-      stockItem: {
-        include: {
-          balance: true,
-        },
-      },
-      stockPackaging: {
-        include: {
-          balance: true,
-        },
-      },
-      composition: {
-        include: {
-          groups: {
-            orderBy: {
-              position: "asc",
-            },
-            include: {
-              options: {
-                orderBy: {
-                  position: "asc",
-                },
-                include: {
-                  stockItem: {
-                    include: {
-                      balance: true,
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-      comboItems: {
-        include: {
-          componentProduct: {
-            include: {
-              stockItem: {
-                include: {
-                  balance: true,
-                },
-              },
-              stockPackaging: {
-                include: {
-                  balance: true,
-                },
-              },
-              composition: {
-                include: {
-                  groups: {
-                    orderBy: {
-                      position: "asc",
-                    },
-                    include: {
-                      options: {
-                        orderBy: {
-                          position: "asc",
-                        },
-                        include: {
-                          stockItem: {
-                            include: {
-                              balance: true,
-                            },
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-      packagingParentProducts: {
-        select: {
-          id: true,
-        },
-      },
-    },
-    orderBy: {
-      name: "asc",
-    },
-  });
-
-  const customers = await prisma.customer.findMany({
-    where: {
-      active: true,
-    },
-    select: {
-      id: true,
-      name: true,
-      phone: true,
-      zipCode: true,
-      street: true,
-      number: true,
-      complement: true,
-      neighborhood: true,
-      city: true,
-      state: true,
-      reference: true,
-    },
-    orderBy: {
-      name: "asc",
-    },
-  });
-
-  const formattedProducts = products.map((product) => {
-    let stock = 0;
-
-    if (product.type === "FRACTIONAL") {
-      stock = getCompositionAvailability(
-        product.composition?.groups ?? [],
-      );
-    } else if (product.type === "COMBO") {
-      if (product.comboItems.length > 0) {
-        stock = Math.max(
-          0,
-          Math.floor(
-            Math.min(
-              ...product.comboItems.map((item) => {
-                const component = item.componentProduct;
-                const required = Number(item.quantity.toString());
-
-                if (required <= 0) return 0;
-
-                if (component.type === "COMBO") return 0;
-
-                const available =
-                  component.type === "FRACTIONAL"
-                    ? getCompositionAvailability(
-                      component.composition?.groups ?? [],
-                    )
-                    : getDirectStock(
-                      component.stockItem,
-                      component.stockPackaging,
-                    );
-
-                return available / required;
-              }),
-            ),
-          ),
-        );
-      }
-    } else {
-      stock = getDirectStock(
-        product.stockItem,
-        product.stockPackaging,
-      );
-    }
-
-    return {
-      id: product.id,
-      code: product.code,
-      name: product.name,
-      type: product.type as PosProductType,
-      salePrice: product.salePrice.toString(),
-      unit: "UNIT",
-      stock: String(stock),
-      canOpenFromPackaging:
-        Boolean(product.stockPackaging) ||
-        product.packagingParentProducts.length > 0,
-
-      composition: product.composition
-        ? {
-          groups: product.composition.groups.map((group) => ({
-            id: group.id,
-            name: group.name,
-            required: group.minSelections > 0,
-            options: group.options.map((option) => ({
-              id: option.id,
-              stockItemId: option.stockItemId,
-              name: option.stockItem.name,
-              unit: option.stockItem.unit,
-              quantity: option.quantity.toString(),
-              available: String(getOptionAvailability(option)),
-            })),
-          })),
-        }
-        : null,
-    };
-  });
+  const {
+    canManageCashRegister,
+    products,
+    customers,
+    deliveries,
+    motoboys,
+    cashRegister,
+  } = await loadPosPageData(session.user.id);
 
   return (
     <PosClient
-      products={formattedProducts}
+      products={products}
       customers={customers}
       canManageCashRegister={canManageCashRegister}
-      cashRegister={
-        cashRegister
-          ? {
-            id: cashRegister.id,
-            openingAmount: cashRegister.openingAmount.toString(),
-            openedAt: cashRegister.openedAt.toISOString(),
-          }
-          : null
-      }
+      deliveries={deliveries}
+      motoboys={motoboys}
+      cashRegister={cashRegister}
     />
   );
 }

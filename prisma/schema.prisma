@@ -376,7 +376,7 @@ model Sale {
 
   accountMovements CustomerAccountMovement[]
 
-  // Endereço de entrega utilizado nesta venda
+  // Snapshot do endereço e taxa utilizados nesta venda
   deliveryZipCode      String?
   deliveryStreet       String?
   deliveryNumber       String?
@@ -385,6 +385,7 @@ model Sale {
   deliveryCity         String?
   deliveryState        String?
   deliveryReference    String?
+  deliveryFee          Decimal @default(0) @db.Decimal(12, 2)
 
   items     SaleItem[]
   movements StockMovement[]
@@ -515,6 +516,20 @@ model Customer {
   phone           String
   phoneNormalized String @unique
 
+  notes     String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  addresses        CustomerAddress[]
+  sales            Sale[]
+  accountMovements CustomerAccountMovement[]
+
+  @@index([name])
+}
+
+model CustomerAddress {
+  id           String  @id @default(cuid())
   zipCode      String
   street       String
   number       String
@@ -524,15 +539,16 @@ model Customer {
   state        String
   reference    String?
 
-  notes     String?
-  active    Boolean  @default(true)
+  deliveryFee Decimal @default(0) @db.Decimal(12, 2)
+  isDefault   Boolean @default(false)
+
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  sales            Sale[]
-  accountMovements CustomerAccountMovement[]
-
-  @@index([name])
+  @@index([customerId])
 }
 
 model Motoboy {
@@ -618,7 +634,7 @@ model Delivery {
   id     String         @id @default(cuid())
   status DeliveryStatus @default(PENDING)
 
-  // Taxa definida na operação e incluída no total da venda
+  // Taxa da entrega (espelha Sale.deliveryFee; editável no despacho)
   fee Decimal @default(0) @db.Decimal(12, 2)
 
   // Previsão de dinheiro entregue pelo cliente e troco

@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { Suspense } from "react";
 
-import { prisma } from "@/lib/prisma";
 import { requireModuleAccess } from "@/lib/permissions";
+import { listRecentStockMovements } from "@/modules/stock/queries";
 
 export const metadata = {
   title: "Movimentações | Adega GS",
@@ -63,30 +63,7 @@ export default function StockMovementsPage() {
 async function MovementsContent() {
   await requireModuleAccess("STOCK");
 
-  const movements = await prisma.stockMovement.findMany({
-    include: {
-      stockItem: {
-        select: {
-          name: true,
-        },
-      },
-      stockPackaging: {
-        select: {
-          name: true,
-        },
-      },
-      user: {
-        select: {
-          name: true,
-          username: true,
-        },
-      },
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-    take: 200,
-  });
+  const movements = await listRecentStockMovements();
 
   return (
     <main className="min-h-screen bg-slate-100 p-5 md:p-8">

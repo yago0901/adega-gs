@@ -3,8 +3,8 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
 
-import { prisma } from "@/lib/prisma";
 import { requireModuleAccess } from "@/lib/permissions";
+import { getEditProductPageData } from "@/modules/products/queries";
 import { updateProduct } from "../../actions";
 import { EditProductFields } from "./edit-product-fields";
 import { EditPackagingFields } from "./edit-packaging-fields";
@@ -36,102 +36,8 @@ async function EditProductContent({
 
   const { id } = await params;
 
-  const [product, categories, stockItems, products] = await Promise.all([
-    prisma.product.findUnique({
-      where: { id },
-      include: {
-        stockItem: {
-          select: {
-            id: true,
-            unit: true,
-            minStock: true,
-            purchaseCost: true,
-          },
-        },
-        stockPackaging: {
-          select: {
-            name: true,
-            conversionFactor: true,
-          },
-        },
-        packagingChildProduct: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
-        packagingParentProducts: {
-          select: {
-            id: true,
-            name: true,
-            packagingChildQuantity: true,
-          },
-        },
-        composition: {
-          include: {
-            groups: {
-              orderBy: {
-                position: "asc",
-              },
-              include: {
-                options: {
-                  orderBy: {
-                    position: "asc",
-                  },
-                  include: {
-                    stockItem: {
-                      select: {
-                        id: true,
-                        name: true,
-                        unit: true,
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-        comboItems: {
-          include: {
-            componentProduct: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-          },
-        },
-      },
-    }),
-
-    prisma.category.findMany({
-      orderBy: { name: "asc" },
-    }),
-
-    prisma.stockItem.findMany({
-      where: { active: true },
-      orderBy: { name: "asc" },
-      select: {
-        id: true,
-        name: true,
-        unit: true,
-      },
-    }),
-
-    prisma.product.findMany({
-      where: {
-        active: true,
-        type: { in: ["STANDARD", "SUPPLY"] },
-        stockItemId: { not: null },
-      },
-      orderBy: { name: "asc" },
-      select: {
-        id: true,
-        name: true,
-      },
-    }),
-  ]);
+  const { product, categories, stockItems, products } =
+    await getEditProductPageData(id);
 
   if (!product || !product.active) {
     notFound();

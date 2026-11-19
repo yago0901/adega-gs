@@ -3,8 +3,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 
-import { prisma } from "@/lib/prisma";
 import { requireModuleAccess } from "@/lib/permissions";
+import { loadFiadoCustomerDetails } from "@/modules/fiados/queries";
 
 import { FiadoActions } from "../fiado-actions";
 
@@ -49,85 +49,19 @@ async function FiadoDetailsContent({ params }: PageProps) {
 
   const { id } = await params;
 
-  const customer = await prisma.customer.findUnique({
-    where: {
-      id,
-    },
-    select: {
-      id: true,
-      name: true,
-      phone: true,
-      accountMovements: {
-        where: {
-          type: "DEBIT",
-          reversedBy: null,
-        },
-        select: {
-          id: true,
-          amount: true,
-          createdAt: true,
-          sale: {
-            select: {
-              id: true,
-              total: true,
-              createdAt: true,
-            },
-          },
-          allocationsAsDebit: {
-            select: {
-              amount: true,
-            },
-          },
-        },
-        orderBy: {
-          createdAt: "desc",
-        },
-      },
-    },
-  });
+  const details = await loadFiadoCustomerDetails(id);
 
-  if (!customer) {
+  if (!details) {
     notFound();
   }
 
-  const debts = customer.accountMovements.map((movement) => {
-    const originalAmount = Number(movement.amount);
-
-    const paidAmount = movement.allocationsAsDebit.reduce(
-      (sum, allocation) => sum + Number(allocation.amount),
-      0,
-    );
-
-    const remainingAmount = Math.max(
-      0,
-      originalAmount - paidAmount,
-    );
-
-    return {
-      id: movement.id,
-      originalAmount,
-      paidAmount,
-      remainingAmount,
-      createdAt: movement.createdAt,
-      sale: movement.sale,
-    };
-  });
-
-  const totalOriginalDebt = debts.reduce(
-    (sum, debt) => sum + debt.originalAmount,
-    0,
-  );
-
-  const totalPaid = debts.reduce(
-    (sum, debt) => sum + debt.paidAmount,
-    0,
-  );
-
-  const totalRemaining = debts.reduce(
-    (sum, debt) => sum + debt.remainingAmount,
-    0,
-  );
-  
+  const {
+    customer,
+    debts,
+    totalOriginalDebt,
+    totalPaid,
+    totalRemaining,
+  } = details;
   return (
     <main className="min-h-screen bg-slate-100 p-5 md:p-8">
       <div className="mx-auto max-w-7xl">

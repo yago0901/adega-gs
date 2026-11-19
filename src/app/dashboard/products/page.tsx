@@ -2,8 +2,8 @@
 import Link from "next/link";
 import { Suspense } from "react";
 
-import { prisma } from "@/lib/prisma";
 import { requireModuleAccess } from "@/lib/permissions";
+import { listActiveProductsWithCategoryAndStockBalance } from "@/modules/products/queries";
 import { deactivateProduct } from "./actions";
 
 export const metadata = {
@@ -27,18 +27,7 @@ export default function ProductsPage() {
 async function ProductsContent() {
   await requireModuleAccess("PRODUCTS");
 
-  const products = await prisma.product.findMany({
-    where: { active: true },
-    include: {
-      category: true,
-      stockItem: {
-        include: {
-          balance: true,
-        },
-      },
-    },
-    orderBy: { name: "asc" },
-  });
+  const products = await listActiveProductsWithCategoryAndStockBalance();
 
   return (
     <main className="min-h-screen bg-slate-100 p-5 md:p-8">

@@ -9,7 +9,7 @@ export default function SignOutButton() {
 
   async function handleSignOut() {
     await signOut();
-    router.replace("/login");
+    router.replace("/");
     router.refresh();
   }
 

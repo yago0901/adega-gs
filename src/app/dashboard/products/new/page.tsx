@@ -1,8 +1,8 @@
 
 import Link from "next/link";
 import { Suspense } from "react";
-import { prisma } from "@/lib/prisma";
 import { requireModuleAccess } from "@/lib/permissions";
+import { getNewProductPageData } from "@/modules/products/queries";
 import { createCategory, createProduct } from "../actions";
 import { ProductTypeFields } from "./product-type-fields";
 import { CategoryManager } from "./category-manager";
@@ -24,62 +24,8 @@ export default async function NewProductPage() {
 async function NewProductContent() {
   await requireModuleAccess("PRODUCTS");
 
-  const [categories, stockItems, products] = await Promise.all([
-    prisma.category.findMany({
-      orderBy: { name: "asc" },
-    }),
-
-    prisma.stockItem.findMany({
-      where: { active: true },
-      orderBy: { name: "asc" },
-      select: {
-        id: true,
-        name: true,
-        unit: true,
-      },
-    }),
-
-    prisma.product.findMany({
-      where: {
-        active: true,
-        type: { in: ["STANDARD", "SUPPLY"] },
-        stockItemId: { not: null },
-      },
-      orderBy: { name: "asc" },
-      select: {
-        id: true,
-        name: true,
-        stockItem: {
-          select: {
-            unit: true,
-          },
-        },
-        stockPackagingId: true,
-        packagingChildProductId: true,
-        packagingParentProducts: {
-          select: {
-            id: true,
-          },
-        },
-      },
-    }),
-  ]);
-
-  const categoryProducts = await prisma.product.findMany({
-    where: {
-      categoryId: {
-        in: categories.map((category) => category.id),
-      },
-    },
-    orderBy: {
-      name: "asc",
-    },
-    select: {
-      id: true,
-      name: true,
-      categoryId: true,
-    },
-  });
+  const { categories, stockItems, products, categoryProducts } =
+    await getNewProductPageData();
 
   const comboProducts = products.map((product) => ({
     id: product.id,

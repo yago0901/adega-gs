@@ -22,7 +22,7 @@ export async function requireModuleAccess(
   });
 
   if (!session) {
-    redirect("/login");
+    redirect("/");
   }
 
   const user = await prisma.user.findUnique({
@@ -37,7 +37,7 @@ export async function requireModuleAccess(
   });
 
   if (!user || !user.active) {
-    redirect("/login");
+    redirect("/");
   }
 
   const hasAccess =
@@ -57,7 +57,7 @@ export async function requireAdmin() {
   });
 
   if (!session) {
-    redirect("/login");
+    redirect("/");
   }
 
   const user = await prisma.user.findUnique({
@@ -69,7 +69,7 @@ export async function requireAdmin() {
   });
 
   if (!user || !user.active) {
-    redirect("/login");
+    redirect("/");
   }
 
   if (user.role !== "ADMIN") {

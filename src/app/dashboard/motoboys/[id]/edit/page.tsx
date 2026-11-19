@@ -3,8 +3,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 
-import { prisma } from "@/lib/prisma";
 import { requireModuleAccess } from "@/lib/permissions";
+import { getMotoboyById } from "@/modules/motoboys/service";
 import { updateMotoboy } from "../../actions";
 
 type EditMotoboyPageProps = {
@@ -36,9 +36,7 @@ async function EditMotoboyContent({
 
   const { id } = await params;
 
-  const motoboy = await prisma.motoboy.findUnique({
-    where: { id },
-  });
+  const motoboy = await getMotoboyById(id);
 
   if (!motoboy || !motoboy.active) {
     notFound();

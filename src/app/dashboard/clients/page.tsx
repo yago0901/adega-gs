@@ -1,14 +1,18 @@
-
 import Link from "next/link";
 import { Suspense } from "react";
 
-import { prisma } from "@/lib/prisma";
 import { requireModuleAccess } from "@/lib/permissions";
+import { listActiveCustomersWithAddresses } from "@/modules/customers/service";
 import { deactivateCustomer } from "./actions";
 
 export const metadata = {
   title: "Clientes | Adega GS",
 };
+
+const currency = new Intl.NumberFormat("pt-BR", {
+  style: "currency",
+  currency: "BRL",
+});
 
 export default function ClientsPage() {
   return (
@@ -27,10 +31,7 @@ export default function ClientsPage() {
 async function ClientsContent() {
   await requireModuleAccess("CUSTOMERS");
 
-  const customers = await prisma.customer.findMany({
-    where: { active: true },
-    orderBy: { name: "asc" },
-  });
+  const customers = await listActiveCustomersWithAddresses();
 
   return (
     <main className="min-h-screen bg-slate-100 p-5 md:p-8">
@@ -44,9 +45,7 @@ async function ClientsContent() {
               ← Dashboard
             </Link>
 
-            <h1 className="mt-3 text-2xl font-bold">
-              Clientes
-            </h1>
+            <h1 className="mt-3 text-2xl font-bold">Clientes</h1>
 
             <p className="mt-1 text-sm text-slate-500">
               Cadastro e consulta dos clientes da adega.
@@ -64,9 +63,7 @@ async function ClientsContent() {
         <div className="mt-8 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           {customers.length === 0 ? (
             <div className="p-12 text-center">
-              <h2 className="font-semibold">
-                Nenhum cliente cadastrado
-              </h2>
+              <h2 className="font-semibold">Nenhum cliente cadastrado</h2>
 
               <p className="mt-2 text-sm text-slate-500">
                 Comece cadastrando o primeiro cliente da adega.
@@ -79,63 +76,80 @@ async function ClientsContent() {
                   <tr>
                     <th className="px-5 py-4">Cliente</th>
                     <th className="px-5 py-4">Telefone</th>
-                    <th className="px-5 py-4">Cidade</th>
-                    <th className="px-5 py-4">Endereço</th>
+                    <th className="px-5 py-4">Endereço padrão</th>
+                    <th className="px-5 py-4">Taxa</th>
                     <th className="px-5 py-4">Ações</th>
                   </tr>
                 </thead>
 
                 <tbody className="divide-y divide-slate-100">
-                  {customers.map((customer) => (
-                    <tr
-                      key={customer.id}
-                      className="hover:bg-slate-50"
-                    >
-                      <td className="px-5 py-4 font-semibold">
-                        {customer.name}
-                      </td>
+                  {customers.map((customer) => {
+                    const defaultAddress =
+                      customer.addresses.find((address) => address.isDefault) ??
+                      customer.addresses[0] ??
+                      null;
 
-                      <td className="px-5 py-4">
-                        {customer.phone}
-                      </td>
+                    return (
+                      <tr key={customer.id} className="hover:bg-slate-50">
+                        <td className="px-5 py-4 font-semibold">
+                          {customer.name}
+                          {customer.addresses.length > 1 && (
+                            <p className="mt-1 text-xs font-normal text-slate-400">
+                              {customer.addresses.length} endereços
+                            </p>
+                          )}
+                        </td>
 
-                      <td className="px-5 py-4">
-                        {customer.city} - {customer.state}
-                      </td>
+                        <td className="px-5 py-4">{customer.phone}</td>
 
-                      <td className="px-5 py-4">
-                        {customer.street}, {customer.number}
-                        <p className="mt-1 text-xs text-slate-400">
-                          {customer.neighborhood}
-                        </p>
-                      </td>
+                        <td className="px-5 py-4">
+                          {defaultAddress ? (
+                            <>
+                              {defaultAddress.city} - {defaultAddress.state}
+                              <p className="mt-1 text-xs text-slate-400">
+                                {defaultAddress.street}, {defaultAddress.number}
+                                {" · "}
+                                {defaultAddress.neighborhood}
+                              </p>
+                            </>
+                          ) : (
+                            <span className="text-slate-400">Sem endereço</span>
+                          )}
+                        </td>
 
-                      <td className="px-5 py-4">
-                        <div className="flex items-center gap-3">
-                          <Link
-                            href={`/dashboard/clients/${customer.id}/edit`}
-                            className="font-medium text-emerald-700 hover:underline"
-                          >
-                            Editar
-                          </Link>
+                        <td className="px-5 py-4">
+                          {defaultAddress
+                            ? currency.format(Number(defaultAddress.deliveryFee))
+                            : "—"}
+                        </td>
 
-                          <form
-                            action={deactivateCustomer.bind(
-                              null,
-                              customer.id
-                            )}
-                          >
-                            <button
-                              type="submit"
-                              className="font-medium text-red-600 hover:underline"
+                        <td className="px-5 py-4">
+                          <div className="flex items-center gap-3">
+                            <Link
+                              href={`/dashboard/clients/${customer.id}/edit`}
+                              className="font-medium text-emerald-700 hover:underline"
                             >
-                              Desativar
-                            </button>
-                          </form>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                              Editar
+                            </Link>
+
+                            <form
+                              action={deactivateCustomer.bind(
+                                null,
+                                customer.id,
+                              )}
+                            >
+                              <button
+                                type="submit"
+                                className="font-medium text-red-600 hover:underline"
+                              >
+                                Desativar
+                              </button>
+                            </form>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

@@ -6,6 +6,10 @@ import { finalizeSale, openCashRegister, closeCashRegister, registerCashSupply, 
 import OpeningConfirmationModal from "./OpeningConfirmationModal";
 import ReceiveDebtModal from "./ReceiveDebtModal";
 import SignOutButton from "../sign-out-button";
+import {
+  DeliveriesTab,
+  type DeliveryOrder,
+} from "./components/deliveries/DeliveriesTab";
 
 type CompositionOption = {
   id: string;
@@ -84,6 +88,12 @@ type SalePaymentRequest = {
   amount: string;
 };
 
+type DeliveryPaymentRequest = {
+  type: "PREPAID" | "TO_COLLECT";
+  method: "CASH" | "PIX" | "CREDIT_CARD" | "DEBIT_CARD";
+  amount: string;
+};
+
 type CashRegister = {
   id: string;
   openingAmount: string;
@@ -95,10 +105,8 @@ const currency = new Intl.NumberFormat("pt-BR", {
   currency: "BRL",
 });
 
-type Customer = {
+type CustomerAddress = {
   id: string;
-  name: string;
-  phone: string;
   zipCode: string;
   street: string;
   number: string;
@@ -107,6 +115,21 @@ type Customer = {
   city: string;
   state: string;
   reference: string | null;
+  deliveryFee: string;
+  isDefault: boolean;
+};
+
+type Customer = {
+  id: string;
+  name: string;
+  phone: string;
+  addresses: CustomerAddress[];
+};
+
+type Motoboy = {
+  id: string;
+  name: string;
+  phone: string;
 };
 
 type DeliveryAddress = {
@@ -118,6 +141,7 @@ type DeliveryAddress = {
   city: string;
   state: string;
   reference: string;
+  deliveryFee: string;
 };
 
 const emptyDeliveryAddress: DeliveryAddress = {
@@ -129,6 +153,7 @@ const emptyDeliveryAddress: DeliveryAddress = {
   city: "",
   state: "",
   reference: "",
+  deliveryFee: "0",
 };
 
 function parseMoneyToCents(value: string): number | null {
@@ -162,13 +187,17 @@ function getTypeLabel(type: Product["type"]) {
 export default function PosClient({
   products,
   customers,
+  motoboys,
   cashRegister,
   canManageCashRegister,
+  deliveries,
 }: {
   products: Product[];
   customers: Customer[];
+  motoboys: Motoboy[];
   cashRegister: CashRegister | null;
   canManageCashRegister: boolean;
+  deliveries: DeliveryOrder[];
 }) {
 
   const router = useRouter();
@@ -245,9 +274,19 @@ export default function PosClient({
   const [cashMovementDescription, setCashMovementDescription] = useState("");
   const [cashMovementError, setCashMovementError] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
+  const [selectedAddressId, setSelectedAddressId] = useState("");
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustomerOptions, setShowCustomerOptions] = useState(false);
   const [isCashMovementPending, startCashMovementTransition] = useTransition();
+
+  const [deliveryPayments, setDeliveryPayments] = useState<
+    DeliveryPaymentRequest[]
+  >([]);
+
+  const [
+    pendingSaleDeliveryPayments,
+    setPendingSaleDeliveryPayments,
+  ] = useState<DeliveryPaymentRequest[] | null>(null);
 
   const availableProducts = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -275,28 +314,48 @@ export default function PosClient({
     (customer) => customer.id === selectedCustomerId,
   );
 
+  const selectedCustomerAddress =
+    selectedCustomer?.addresses.find(
+      (address) => address.id === selectedAddressId,
+    ) ??
+    selectedCustomer?.addresses.find((address) => address.isDefault) ??
+    selectedCustomer?.addresses[0] ??
+    null;
+
   const currentDeliveryAddress: DeliveryAddress | null =
     temporaryAddress ??
-    (selectedCustomer
+    (selectedCustomerAddress
       ? {
-        zipCode: selectedCustomer.zipCode,
-        street: selectedCustomer.street,
-        number: selectedCustomer.number,
-        complement: selectedCustomer.complement ?? "",
-        neighborhood: selectedCustomer.neighborhood,
-        city: selectedCustomer.city,
-        state: selectedCustomer.state,
-        reference: selectedCustomer.reference ?? "",
+        zipCode: selectedCustomerAddress.zipCode,
+        street: selectedCustomerAddress.street,
+        number: selectedCustomerAddress.number,
+        complement: selectedCustomerAddress.complement ?? "",
+        neighborhood: selectedCustomerAddress.neighborhood,
+        city: selectedCustomerAddress.city,
+        state: selectedCustomerAddress.state,
+        reference: selectedCustomerAddress.reference ?? "",
+        deliveryFee: selectedCustomerAddress.deliveryFee,
       }
       : null);
 
-  const total = cart.reduce(
+  const itemsTotal = cart.reduce(
     (sum, item) =>
       sum + Number(item.product.salePrice) * item.quantity,
     0,
   );
 
+  const deliveryFeeCents = isDelivery
+    ? parseMoneyToCents(currentDeliveryAddress?.deliveryFee ?? "0")
+    : 0;
+
+  const deliveryFeeAmount =
+    deliveryFeeCents === null ? 0 : deliveryFeeCents / 100;
+
+  const total =
+    itemsTotal + (isDelivery && deliveryFeeCents !== null ? deliveryFeeAmount : 0);
+
   const totalCents = Math.round(total * 100);
+  const itemsTotalCents = Math.round(itemsTotal * 100);
 
   const paymentAmountsInCents = payments.map((payment) =>
     parseMoneyToCents(payment.amount),
@@ -342,8 +401,82 @@ export default function PosClient({
 
   const paidTotal = paidTotalCents / 100;
 
+  const deliveryPaymentAmountsInCents = deliveryPayments.map((payment) =>
+    parseMoneyToCents(payment.amount),
+  );
+
+
+  const deliveryTotalCents = deliveryPaymentAmountsInCents.reduce<number>(
+    (sum, amount) => sum + (amount ?? 0),
+    0,
+  );
+
+  const hasInvalidDeliveryPayment = deliveryPayments.some(
+    (payment, index) => {
+      const amount = deliveryPaymentAmountsInCents[index];
+
+      return (
+        amount === null ||
+        amount <= 0 ||
+        !["PREPAID", "TO_COLLECT"].includes(payment.type) ||
+        !["CASH", "PIX", "CREDIT_CARD", "DEBIT_CARD"].includes(payment.method)
+      );
+    },
+  );
+
+  const hasDuplicateDeliveryPayments =
+    new Set(
+      deliveryPayments.map(
+        (payment) => `${payment.type}:${payment.method}`,
+      ),
+    ).size !== deliveryPayments.length;
+
+  const deliveryNonCashCents = deliveryPayments.reduce(
+    (sum, payment, index) => {
+      const amount = deliveryPaymentAmountsInCents[index] ?? 0;
+
+      return payment.type === "PREPAID" || payment.method !== "CASH"
+        ? sum + amount
+        : sum;
+    },
+    0,
+  );
+
+  const deliveryCashToCollectCents = deliveryPayments.reduce(
+    (sum, payment, index) => {
+      const amount = deliveryPaymentAmountsInCents[index] ?? 0;
+
+      return payment.type === "TO_COLLECT" && payment.method === "CASH"
+        ? sum + amount
+        : sum;
+    },
+    0,
+  );
+
+  const deliveryChangeCents = Math.max(
+    0,
+    deliveryTotalCents - totalCents,
+  );
+
+  const isDeliveryPaymentValid =
+    deliveryPayments.length > 0 &&
+    deliveryPayments.length <= 8 &&
+    !hasInvalidDeliveryPayment &&
+    !hasDuplicateDeliveryPayments &&
+    deliveryFeeCents !== null &&
+    deliveryFeeCents >= 0 &&
+    deliveryTotalCents >= totalCents &&
+    deliveryNonCashCents <= totalCents &&
+    deliveryChangeCents <= deliveryCashToCollectCents;
+
+
   const isPaymentValid = isDelivery
-    ? Boolean(selectedCustomerId && currentDeliveryAddress)
+    ? Boolean(
+      selectedCustomerId &&
+      currentDeliveryAddress &&
+      deliveryFeeCents !== null &&
+      isDeliveryPaymentValid
+    )
     : (
       paymentAmountsInCents.every(
         (amount) => amount !== null && amount >= 0,
@@ -496,6 +629,7 @@ export default function PosClient({
     saleAccountAmount: string = accountAmount.trim().replace(",", "."),
     saleIsDelivery = false,
     saleDeliveryAddress: DeliveryAddress | null = null,
+    saleDeliveryPayments: DeliveryPaymentRequest[] = [],
   ) {
     startTransition(async () => {
       try {
@@ -508,6 +642,7 @@ export default function PosClient({
           saleAccountAmount,
           saleIsDelivery,
           saleDeliveryAddress,
+          saleDeliveryPayments,
         );
 
         if (!result.success) {
@@ -519,6 +654,7 @@ export default function PosClient({
             setPendingSaleAccountAmount(null);
             setPendingSaleIsDelivery(false);
             setPendingSaleDeliveryAddress(null);
+            setPendingSaleDeliveryPayments(null);
           }
 
           setSaleError(result.error);
@@ -533,6 +669,7 @@ export default function PosClient({
           setPendingSaleAccountAmount(saleAccountAmount);
           setPendingSaleIsDelivery(saleIsDelivery);
           setPendingSaleDeliveryAddress(saleDeliveryAddress);
+          setPendingSaleDeliveryPayments(saleDeliveryPayments);
           return;
         }
 
@@ -555,7 +692,9 @@ export default function PosClient({
         setPendingSaleAccountAmount(null);
         setPendingSaleIsDelivery(false);
         setPendingSaleDeliveryAddress(null);
+        setPendingSaleDeliveryPayments(null);
 
+        setDeliveryPayments([]);
         setIsDelivery(false);
         setTemporaryAddress(null);
 
@@ -608,6 +747,45 @@ export default function PosClient({
     );
   }
 
+  function handleAddDeliveryPayment() {
+    if (deliveryPayments.length >= 8) return;
+
+    setDeliveryPayments((current) => [
+      ...current,
+      {
+        type: "TO_COLLECT",
+        method: "PIX",
+        amount: "",
+      },
+    ]);
+  }
+
+  function handleDeliveryPaymentChange(
+    index: number,
+    field: "type" | "method" | "amount",
+    value: string,
+  ) {
+    setDeliveryPayments((current) =>
+      current.map((payment, i) =>
+        i === index
+          ? {
+            ...payment,
+            [field]:
+              field === "amount"
+                ? value.replace(/[^\d.,]/g, "")
+                : value,
+          }
+          : payment,
+      ),
+    );
+  }
+
+  function handleRemoveDeliveryPayment(index: number) {
+    setDeliveryPayments((current) =>
+      current.filter((_, i) => i !== index),
+    );
+  }
+
   function handleFinalize() {
     if (cart.length === 0 || isPending) return;
 
@@ -616,6 +794,11 @@ export default function PosClient({
 
     if (isDelivery && !currentDeliveryAddress) {
       setSaleError("Informe um endereço válido para a entrega.");
+      return;
+    }
+
+    if (isDelivery && deliveryFeeCents === null) {
+      setSaleError("Informe uma taxa de entrega válida.");
       return;
     }
 
@@ -646,6 +829,12 @@ export default function PosClient({
       isDelivery ? "0" : accountAmount.trim().replace(",", "."),
       isDelivery,
       isDelivery ? currentDeliveryAddress : null,
+      isDelivery
+        ? deliveryPayments.map((payment) => ({
+          ...payment,
+          amount: payment.amount.trim().replace(",", "."),
+        }))
+        : [],
     );
   }
 
@@ -689,6 +878,7 @@ export default function PosClient({
       pendingSaleAccountAmount ?? "0.00",
       pendingSaleIsDelivery,
       pendingSaleDeliveryAddress,
+      pendingSaleDeliveryPayments ?? [],
     );
   }
 
@@ -697,9 +887,11 @@ export default function PosClient({
     setPendingSaleItems(null);
     setPendingSalePayments(null);
     setPendingSaleCustomerId(null);
+    setSelectedCustomerId("");
     setPendingSaleAccountAmount(null);
     setPendingSaleIsDelivery(false);
     setPendingSaleDeliveryAddress(null);
+    setPendingSaleDeliveryPayments(null);
     setMessage("Abertura de estoque cancelada. A venda não foi realizada.");
   }
 
@@ -754,7 +946,18 @@ export default function PosClient({
   ) {
     event.preventDefault();
 
-    setTemporaryAddress(temporaryAddressDraft);
+    const feeCents = parseMoneyToCents(temporaryAddressDraft.deliveryFee);
+
+    if (feeCents === null || feeCents < 0) {
+      setSaleError("Informe uma taxa de entrega válida no endereço temporário.");
+      return;
+    }
+
+    setSaleError("");
+    setTemporaryAddress({
+      ...temporaryAddressDraft,
+      deliveryFee: temporaryAddressDraft.deliveryFee.trim().replace(",", "."),
+    });
     setShowTemporaryAddressModal(false);
   }
 
@@ -967,7 +1170,6 @@ export default function PosClient({
           </div>
         </div>
       )}
-
 
       {showCloseModal && canManageCashRegister && cashRegister && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -1471,6 +1673,25 @@ export default function PosClient({
                 />
               </div>
 
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Taxa de entrega (R$) *
+                </label>
+                <input
+                  value={temporaryAddressDraft.deliveryFee}
+                  onChange={(event) =>
+                    setTemporaryAddressDraft((current) => ({
+                      ...current,
+                      deliveryFee: event.target.value.replace(/[^\d.,]/g, ""),
+                    }))
+                  }
+                  required
+                  inputMode="decimal"
+                  placeholder="0,00"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
+                />
+              </div>
+
               <div className="flex justify-end gap-3 pt-2">
                 <button
                   type="button"
@@ -1598,7 +1819,9 @@ export default function PosClient({
                   onChange={(event) => {
                     setCustomerSearch(event.target.value);
                     setSelectedCustomerId("");
+                    setSelectedAddressId("");
                     setIsDelivery(false);
+                    setDeliveryPayments([]);
                     setTemporaryAddress(null);
                     setShowCustomerOptions(true);
                   }}
@@ -1614,10 +1837,17 @@ export default function PosClient({
                           key={customer.id}
                           type="button"
                           onClick={() => {
+                            const defaultAddress =
+                              customer.addresses.find(
+                                (address) => address.isDefault,
+                              ) ?? customer.addresses[0] ?? null;
+
                             setSelectedCustomerId(customer.id);
+                            setSelectedAddressId(defaultAddress?.id ?? "");
                             setCustomerSearch(`${customer.name} — ${customer.phone}`);
                             setTemporaryAddress(null);
                             setIsDelivery(false);
+                            setDeliveryPayments([]);
                             setShowCustomerOptions(false);
                           }}
                           className="block w-full border-b border-gray-100 px-3 py-3 text-left text-sm hover:bg-gray-50"
@@ -1644,9 +1874,11 @@ export default function PosClient({
                     disabled={isSaleAwaitingConfirmation}
                     onClick={() => {
                       setSelectedCustomerId("");
+                      setSelectedAddressId("");
                       setCustomerSearch("");
                       setShowCustomerOptions(false);
                       setIsDelivery(false);
+                      setDeliveryPayments([]);
                       setTemporaryAddress(null);
                     }}
                     className="mt-2 text-xs text-red-600 hover:underline"
@@ -1662,42 +1894,87 @@ export default function PosClient({
                         type="checkbox"
                         checked={isDelivery}
                         disabled={isSaleAwaitingConfirmation}
-                        onChange={(event) => setIsDelivery(event.target.checked)}
+                        onChange={(event) => {
+                          const checked = event.target.checked;
+
+                          setIsDelivery(checked);
+
+                          if (!checked) {
+                            setDeliveryPayments([]);
+                          }
+                        }}
                         className="h-4 w-4 rounded border-gray-300 text-blue-600"
                       />
                       Enviar para entrega
                     </label>
 
-                    {isDelivery && currentDeliveryAddress && (
+                    {isDelivery && (
                       <div className="space-y-2 border-t border-gray-100 pt-3">
-                        <div>
-                          <p className="text-xs font-semibold uppercase text-gray-500">
-                            Endereço da entrega
-                          </p>
-
-                          <p className="mt-1 text-sm text-gray-800">
-                            {currentDeliveryAddress.street},{" "}
-                            {currentDeliveryAddress.number}
-                            {currentDeliveryAddress.complement &&
-                              ` — ${currentDeliveryAddress.complement}`}
-                          </p>
-
-                          <p className="text-sm text-gray-600">
-                            {currentDeliveryAddress.neighborhood} —{" "}
-                            {currentDeliveryAddress.city}/
-                            {currentDeliveryAddress.state}
-                          </p>
-
-                          <p className="text-sm text-gray-600">
-                            CEP: {currentDeliveryAddress.zipCode}
-                          </p>
-
-                          {currentDeliveryAddress.reference && (
-                            <p className="mt-1 text-xs text-gray-500">
-                              Referência: {currentDeliveryAddress.reference}
-                            </p>
+                        {!temporaryAddress &&
+                          selectedCustomer &&
+                          selectedCustomer.addresses.length > 1 && (
+                            <label className="block text-sm font-medium text-gray-700">
+                              Endereço cadastrado
+                              <select
+                                value={selectedAddressId}
+                                disabled={isSaleAwaitingConfirmation}
+                                onChange={(event) =>
+                                  setSelectedAddressId(event.target.value)
+                                }
+                                className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500"
+                              >
+                                {selectedCustomer.addresses.map((address) => (
+                                  <option key={address.id} value={address.id}>
+                                    {address.street}, {address.number}
+                                    {address.isDefault ? " (padrão)" : ""} — taxa{" "}
+                                    {currency.format(Number(address.deliveryFee))}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
                           )}
-                        </div>
+
+                        {currentDeliveryAddress ? (
+                          <div>
+                            <p className="text-xs font-semibold uppercase text-gray-500">
+                              Endereço da entrega
+                            </p>
+
+                            <p className="mt-1 text-sm text-gray-800">
+                              {currentDeliveryAddress.street},{" "}
+                              {currentDeliveryAddress.number}
+                              {currentDeliveryAddress.complement &&
+                                ` — ${currentDeliveryAddress.complement}`}
+                            </p>
+
+                            <p className="text-sm text-gray-600">
+                              {currentDeliveryAddress.neighborhood} —{" "}
+                              {currentDeliveryAddress.city}/
+                              {currentDeliveryAddress.state}
+                            </p>
+
+                            <p className="text-sm text-gray-600">
+                              CEP: {currentDeliveryAddress.zipCode}
+                            </p>
+
+                            <p className="mt-1 text-sm font-medium text-gray-800">
+                              Taxa:{" "}
+                              {currency.format(
+                                Number(currentDeliveryAddress.deliveryFee),
+                              )}
+                            </p>
+
+                            {currentDeliveryAddress.reference && (
+                              <p className="mt-1 text-xs text-gray-500">
+                                Referência: {currentDeliveryAddress.reference}
+                              </p>
+                            )}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-red-600">
+                            Este cliente não possui endereço cadastrado.
+                          </p>
+                        )}
 
                         <div className="flex flex-wrap gap-3">
                           <button
@@ -1705,7 +1982,10 @@ export default function PosClient({
                             disabled={isSaleAwaitingConfirmation}
                             onClick={() => {
                               setTemporaryAddressDraft(
-                                temporaryAddress ?? emptyDeliveryAddress,
+                                temporaryAddress ??
+                                  (currentDeliveryAddress
+                                    ? { ...currentDeliveryAddress }
+                                    : emptyDeliveryAddress),
                               );
                               setShowTemporaryAddressModal(true);
                             }}
@@ -1723,14 +2003,15 @@ export default function PosClient({
                               onClick={() => setTemporaryAddress(null)}
                               className="text-xs font-medium text-gray-600 hover:underline disabled:opacity-50"
                             >
-                              Usar endereço principal
+                              Usar endereço cadastrado
                             </button>
                           )}
                         </div>
 
                         {temporaryAddress && (
                           <p className="text-xs text-blue-700">
-                            Endereço temporário — será utilizado somente nesta venda.
+                            Endereço temporário — será utilizado somente nesta
+                            venda.
                           </p>
                         )}
                       </div>
@@ -1891,14 +2172,27 @@ export default function PosClient({
                 ))}
               </div>
 
-              <div className="mt-5 flex items-center justify-between border-t border-gray-200 pt-4">
-                <span className="font-medium text-gray-600">
-                  Total
-                </span>
+              <div className="mt-5 space-y-2 border-t border-gray-200 pt-4">
+                {isDelivery && (
+                  <>
+                    <div className="flex items-center justify-between text-sm text-gray-600">
+                      <span>Produtos</span>
+                      <span>{currency.format(itemsTotal)}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm text-gray-600">
+                      <span>Taxa de entrega</span>
+                      <span>{currency.format(deliveryFeeAmount)}</span>
+                    </div>
+                  </>
+                )}
 
-                <span className="text-2xl font-bold text-gray-900">
-                  {currency.format(total)}
-                </span>
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-gray-600">Total</span>
+
+                  <span className="text-2xl font-bold text-gray-900">
+                    {currency.format(total)}
+                  </span>
+                </div>
               </div>
 
               {hasIncompleteComposition && (
@@ -2047,14 +2341,198 @@ export default function PosClient({
               )}
 
               {isDelivery && (
-                <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 p-3">
-                  <p className="text-sm font-semibold text-blue-800">
-                    Venda para entrega
-                  </p>
-                  <p className="mt-1 text-sm text-blue-700">
-                    Os pagamentos, valores antecipados e eventual troco serão
-                    informados na operação de entrega.
-                  </p>
+                <div className="mt-4 space-y-4 rounded-lg border border-blue-200 bg-blue-50 p-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-blue-900">
+                      Pagamentos da entrega
+                    </h3>
+
+                    <p className="mt-1 text-xs text-blue-800">
+                      Informe o que já foi pago antecipadamente e o que o motoboy
+                      deverá receber no local. Esses valores só serão lançados no
+                      caixa quando a entrega for concluída.
+                    </p>
+                  </div>
+
+                  <div className="space-y-3">
+                    {deliveryPayments.map((payment, index) => (
+                      <div
+                        key={index}
+                        className="space-y-2 rounded-lg border border-blue-100 bg-white p-3"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-semibold text-gray-800">
+                            Pagamento {index + 1}
+                          </span>
+
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveDeliveryPayment(index)}
+                            disabled={isSaleAwaitingConfirmation}
+                            className="text-xs font-medium text-red-600 hover:underline disabled:opacity-50"
+                          >
+                            Remover
+                          </button>
+                        </div>
+
+                        <div>
+                          <label className="mb-1 block text-xs font-medium text-gray-600">
+                            Situação
+                          </label>
+
+                          <select
+                            value={payment.type}
+                            disabled={isSaleAwaitingConfirmation}
+                            onChange={(event) =>
+                              handleDeliveryPaymentChange(
+                                index,
+                                "type",
+                                event.target.value,
+                              )
+                            }
+                            className="w-full rounded-md border border-gray-300 bg-white p-2 text-sm"
+                          >
+                            <option value="PREPAID">Já pago antecipadamente</option>
+                            <option value="TO_COLLECT">Receber na entrega</option>
+                          </select>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="mb-1 block text-xs font-medium text-gray-600">
+                              Forma de pagamento
+                            </label>
+
+                            <select
+                              value={payment.method}
+                              disabled={isSaleAwaitingConfirmation}
+                              onChange={(event) =>
+                                handleDeliveryPaymentChange(
+                                  index,
+                                  "method",
+                                  event.target.value,
+                                )
+                              }
+                              className="w-full min-w-0 rounded-md border border-gray-300 bg-white p-2 text-sm"
+                            >
+                              <option value="CASH">Dinheiro</option>
+                              <option value="PIX">PIX</option>
+                              <option value="CREDIT_CARD">Crédito</option>
+                              <option value="DEBIT_CARD">Débito</option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="mb-1 block text-xs font-medium text-gray-600">
+                              Valor (R$)
+                            </label>
+
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              placeholder="0,00"
+                              value={payment.amount}
+                              disabled={isSaleAwaitingConfirmation}
+                              onChange={(event) =>
+                                handleDeliveryPaymentChange(
+                                  index,
+                                  "amount",
+                                  event.target.value,
+                                )
+                              }
+                              className="w-full min-w-0 rounded-md border border-gray-300 p-2 text-sm"
+                            />
+                          </div>
+                        </div>
+
+                        {payment.type === "TO_COLLECT" &&
+                          (payment.method === "CREDIT_CARD" ||
+                            payment.method === "DEBIT_CARD") && (
+                            <p className="text-xs text-amber-700">
+                              O motoboy deverá levar a maquininha para receber este valor.
+                            </p>
+                          )}
+                      </div>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleAddDeliveryPayment}
+                    disabled={
+                      deliveryPayments.length >= 8 ||
+                      isSaleAwaitingConfirmation
+                    }
+                    className="w-full rounded-md border border-blue-300 bg-white px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    + Adicionar pagamento
+                  </button>
+
+                  <div className="space-y-2 border-t border-blue-200 pt-3 text-sm">
+                    <div className="flex justify-between text-gray-600">
+                      <span>Produtos</span>
+                      <span>{currency.format(itemsTotalCents / 100)}</span>
+                    </div>
+
+                    <div className="flex justify-between text-gray-600">
+                      <span>Taxa de entrega</span>
+                      <span>{currency.format(deliveryFeeAmount)}</span>
+                    </div>
+
+                    <div className="flex justify-between">
+                      <span className="text-gray-700">Total da venda</span>
+                      <strong>{currency.format(total)}</strong>
+                    </div>
+
+                    <div className="flex justify-between">
+                      <span className="text-gray-700">Total dos pagamentos</span>
+                      <strong>
+                        {currency.format(deliveryTotalCents / 100)}
+                      </strong>
+                    </div>
+
+
+                    {deliveryTotalCents < totalCents && (
+                      <p className="text-xs font-medium text-red-700">
+                        Faltam{" "}
+                        {currency.format((totalCents - deliveryTotalCents) / 100)}
+                        {" "}para completar o total.
+                      </p>
+                    )}
+
+                    {deliveryNonCashCents > totalCents && (
+                      <p className="text-xs font-medium text-red-700">
+                        Os pagamentos antecipados e os pagamentos sem dinheiro não podem ultrapassar o total da venda.
+                      </p>
+                    )}
+
+                    {deliveryChangeCents > deliveryCashToCollectCents && (
+                      <p className="text-xs font-medium text-red-700">
+                        O dinheiro a receber na entrega é insuficiente para devolver o troco.
+                      </p>
+                    )}
+
+                    {deliveryChangeCents > 0 &&
+                      deliveryChangeCents <= deliveryCashToCollectCents && (
+                        <div className="flex justify-between rounded-lg bg-green-100 p-3 font-bold text-green-800">
+                          <span>Troco que o motoboy deverá levar</span>
+                          <span>{currency.format(deliveryChangeCents / 100)}</span>
+                        </div>
+                      )}
+
+
+                    {hasDuplicateDeliveryPayments && (
+                      <p className="text-xs text-red-700">
+                        Não repita a mesma forma de pagamento na mesma situação.
+                      </p>
+                    )}
+
+                    {deliveryPayments.length === 0 && (
+                      <p className="text-xs text-amber-700">
+                        Adicione pelo menos uma forma de pagamento.
+                      </p>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -2076,15 +2554,7 @@ export default function PosClient({
           </div>
         ) : null
       ) : (
-        <section className="rounded-xl border border-dashed border-gray-300 bg-white p-12 text-center">
-          <h2 className="text-lg font-semibold text-gray-800">
-            Pedidos de entrega
-          </h2>
-
-          <p className="mt-2 text-sm text-gray-500">
-            Esta área será implementada futuramente.
-          </p>
-        </section>
+        <DeliveriesTab deliveries={deliveries} motoboys={motoboys} />
       )}
     </main>
   );

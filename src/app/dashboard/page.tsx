@@ -5,7 +5,10 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/prisma";
+import {
+  getDashboardAdminMetrics,
+  getDashboardCurrentUser,
+} from "@/modules/dashboard/queries";
 import SignOutButton from "./sign-out-button";
 import { Sidebar } from "@/components/layout/sidebar";
 
@@ -38,31 +41,20 @@ async function DashboardContent() {
   });
 
   if (!session) {
-    redirect("/login");
+    redirect("/");
   }
 
-  const currentUser = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: {
-      role: true,
-      active: true,
-      accesses: {
-        select: {
-          module: true,
-        },
-      },
-    },
-  });
+  const currentUser = await getDashboardCurrentUser(session.user.id);
 
   if (!currentUser || !currentUser.active) {
-    redirect("/login");
+    redirect("/");
   }
 
   if (
     currentUser.role !== "ADMIN" &&
     currentUser.accesses.length === 0
   ) {
-    redirect("/login");
+    redirect("/");
   }
 
   const moduleByHref: Record<string, string> = {
@@ -106,84 +98,12 @@ async function DashboardContent() {
   let inventoryCost = 0;
 
   if (currentUser.role === "ADMIN") {
-    const today = new Date().toLocaleDateString("en-CA", {
-      timeZone: "America/Sao_Paulo",
-    });
+    const metrics = await getDashboardAdminMetrics();
 
-    const startOfDay = new Date(`${today}T00:00:00-03:00`);
-
-    const [productsCount, salesCount, stockItems] = await Promise.all([
-      prisma.product.count({
-        where: { active: true },
-      }),
-
-      prisma.stockMovement.count({
-        where: {
-          type: "SALE",
-          createdAt: { gte: startOfDay },
-        },
-      }),
-
-      prisma.stockItem.findMany({
-        where: { active: true },
-        select: {
-          name: true,
-          unit: true,
-          minStock: true,
-          purchaseCost: true,
-          balance: {
-            select: {
-              quantity: true,
-            },
-          },
-          packagings: {
-            select: {
-              conversionFactor: true,
-              balance: {
-                select: {
-                  quantity: true,
-                },
-              },
-            },
-          },
-        },
-      }),
-    ]);
-
-    activeProducts = productsCount;
-    salesToday = salesCount;
-
-    const stockSummary = stockItems.map((item) => {
-      const looseQuantity = item.balance?.quantity.toNumber() ?? 0;
-
-      const packagedQuantity = item.packagings.reduce(
-        (total, packaging) => {
-          const quantity = packaging.balance?.quantity.toNumber() ?? 0;
-
-          return total + quantity * packaging.conversionFactor.toNumber();
-        },
-        0
-      );
-
-      const totalQuantity = looseQuantity + packagedQuantity;
-
-      return {
-        name: item.name,
-        unit: item.unit,
-        minStock: item.minStock.toNumber(),
-        quantity: totalQuantity,
-        purchaseCost: item.purchaseCost.toNumber(),
-      };
-    });
-
-    lowStockProducts = stockSummary
-      .filter((item) => item.quantity <= item.minStock)
-      .sort((a, b) => a.quantity - b.quantity);
-
-    inventoryCost = stockSummary.reduce(
-      (total, item) => total + item.quantity * item.purchaseCost,
-      0
-    );
+    activeProducts = metrics.activeProducts;
+    salesToday = metrics.salesToday;
+    lowStockProducts = metrics.lowStockProducts;
+    inventoryCost = metrics.inventoryCost;
   }
 
   const isAdmin = currentUser.role === "ADMIN";

@@ -1,6 +1,6 @@
 import { connection } from "next/server";
 import { requireAdmin } from "@/lib/permissions";
-import { prisma } from "@/lib/prisma";
+import { listEmployeesWithAccess } from "@/modules/employees/queries";
 import { EmployeeManagement } from "./employee-management";
 import Link from "next/link";
 
@@ -10,28 +10,7 @@ export default async function EmployeesPage() {
   await connection();
   await requireAdmin();
 
-  const employees = await prisma.user.findMany({
-    where: {
-      role: "EMPLOYEE",
-    },
-    select: {
-      id: true,
-      name: true,
-      username: true,
-      email: true,
-      active: true,
-      createdAt: true,
-      accesses: {
-        select: {
-          module: true,
-          canManageCashRegister: true,
-        },
-      },
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-  });
+  const employees = await listEmployeesWithAccess();
 
   return (
     <div className="space-y-6">

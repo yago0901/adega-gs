@@ -2,8 +2,8 @@
 import Link from "next/link";
 import { Suspense } from "react";
 
-import { prisma } from "@/lib/prisma";
 import { requireModuleAccess } from "@/lib/permissions";
+import { listActiveProductsWithStockDetails } from "@/modules/stock/queries";
 
 import {
   registerStockEntry,
@@ -58,31 +58,7 @@ export default function StockPage() {
 async function StockContent() {
   await requireModuleAccess("STOCK");
 
-  const products = await prisma.product.findMany({
-    where: {
-      active: true,
-      stockItemId: {
-        not: null,
-      },
-    },
-    include: {
-      category: true,
-      stockItem: {
-        include: {
-          balance: true,
-        },
-      },
-      stockPackaging: {
-        include: {
-          balance: true,
-        },
-      },
-      packagingChildProduct: true,
-    },
-    orderBy: {
-      name: "asc",
-    },
-  });
+  const products = await listActiveProductsWithStockDetails();
 
   const stockItems = products
     .filter((product) => product.stockItem !== null)

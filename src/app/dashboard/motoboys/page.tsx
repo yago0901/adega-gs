@@ -2,8 +2,8 @@
 import Link from "next/link";
 import { Suspense } from "react";
 
-import { prisma } from "@/lib/prisma";
 import { requireModuleAccess } from "@/lib/permissions";
+import { listAllMotoboys } from "@/modules/motoboys/service";
 import {
   deactivateMotoboy,
   reactivateMotoboy,
@@ -30,12 +30,7 @@ export default function MotoboysPage() {
 async function MotoboysContent() {
   await requireModuleAccess("MOTOBOYS");
 
-  const motoboys = await prisma.motoboy.findMany({
-    orderBy: [
-      { active: "desc" },
-      { name: "asc" },
-    ],
-  });
+  const motoboys = await listAllMotoboys();
 
   const activeCount = motoboys.filter(
     (motoboy) => motoboy.active,

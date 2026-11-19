@@ -2,8 +2,8 @@
 import Link from "next/link";
 import { Suspense } from "react";
 
-import { prisma } from "@/lib/prisma";
 import { requireModuleAccess } from "@/lib/permissions";
+import { loadFiadosListPageData } from "@/modules/fiados/queries";
 import { FiadoActions } from "./fiado-actions";
 
 export const metadata = {
@@ -34,67 +34,8 @@ export default function FiadosPage() {
 async function FiadosContent() {
   await requireModuleAccess("FIADOS");
 
-  const customers = await prisma.customer.findMany({
-    where: {
-      active: true,
-      accountMovements: {
-        some: {
-          type: "DEBIT",
-          reversedBy: null,
-        },
-      },
-    },
-    select: {
-      id: true,
-      name: true,
-      phone: true,
-      accountMovements: {
-        where: {
-          type: "DEBIT",
-          reversedBy: null,
-        },
-        select: {
-          amount: true,
-          allocationsAsDebit: {
-            select: {
-              amount: true,
-            },
-          },
-        },
-      },
-    },
-    orderBy: {
-      name: "asc",
-    },
-  });
-
-  const customersWithDebt = customers
-    .map((customer) => {
-      const totalDebt = customer.accountMovements.reduce(
-        (total, movement) => {
-          const paid = movement.allocationsAsDebit.reduce(
-            (sum, allocation) => sum + Number(allocation.amount),
-            0,
-          );
-
-          return total + Number(movement.amount) - paid;
-        },
-        0,
-      );
-
-      return {
-        id: customer.id,
-        name: customer.name,
-        phone: customer.phone,
-        totalDebt: Math.max(0, totalDebt),
-      };
-    })
-    .filter((customer) => customer.totalDebt > 0);
-
-  const totalOpenDebt = customersWithDebt.reduce(
-    (total, customer) => total + customer.totalDebt,
-    0,
-  );
+  const { customersWithDebt, totalOpenDebt } =
+    await loadFiadosListPageData();
 
   return (
     <main className="min-h-screen bg-slate-100 p-5 md:p-8">

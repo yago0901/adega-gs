@@ -12,6 +12,7 @@ type Sale = {
   }[];
   accountAmount: number;
   total: number;
+  deliveryFee: number;
   cashReceived: number;
   changeAmount: number;
   createdAt: string;
@@ -644,7 +645,21 @@ export function HistoryClient({
               ))}
             </div>
 
-            <div className="mt-4 border-t pt-4 text-right">
+            <div className="mt-4 space-y-1 border-t pt-4 text-right">
+              {selectedSale.deliveryFee > 0 && (
+                <>
+                  <p className="text-sm text-gray-500">
+                    Produtos:{" "}
+                    {currency.format(
+                      selectedSale.total - selectedSale.deliveryFee,
+                    )}
+                  </p>
+                  <p className="text-sm text-gray-500">
+                    Taxa de entrega:{" "}
+                    {currency.format(selectedSale.deliveryFee)}
+                  </p>
+                </>
+              )}
               <p className="text-sm text-gray-500">Total da venda</p>
               <p className="text-2xl font-bold">
                 {currency.format(selectedSale.total)}
