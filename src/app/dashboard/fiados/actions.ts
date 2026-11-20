@@ -2,7 +2,14 @@
 
 import { revalidatePath } from "next/cache";
 import { requireModuleAccess } from "@/lib/permissions";
+import type { ListQueryInput } from "@/lib/list-query";
+import { listFiados } from "@/modules/fiados/list";
 import { allocateCustomerAvailableCreditsRecord } from "@/modules/fiados/service";
+
+export async function listFiadosAction(input: ListQueryInput = {}) {
+  await requireModuleAccess("FIADOS");
+  return listFiados(input);
+}
 
 export async function allocateCustomerCredits(
   customerId: string,

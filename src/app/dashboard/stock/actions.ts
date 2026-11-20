@@ -2,6 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 
+import type { StockListInput } from "@/modules/stock/list";
+import {
+  listStockItems,
+  listStockMovements,
+} from "@/modules/stock/list";
 import { requireModuleAccess } from "@/lib/permissions";
 import {
   openCommercialPackagingRecord,
@@ -10,6 +15,16 @@ import {
   registerStockEntryRecord,
   registerStockLossRecord,
 } from "@/modules/stock/service";
+
+export async function listStockItemsAction(input: StockListInput = {}) {
+  await requireModuleAccess("STOCK");
+  return listStockItems(input);
+}
+
+export async function listStockMovementsAction(input: StockListInput = {}) {
+  await requireModuleAccess("STOCK");
+  return listStockMovements(input);
+}
 
 function revalidateStockPages() {
   revalidatePath("/dashboard/stock");

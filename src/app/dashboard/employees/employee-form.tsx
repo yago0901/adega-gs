@@ -32,9 +32,14 @@ type Employee = {
 type Props = {
   employee?: Employee | null;
   onCancelEdit?: () => void;
+  onSaved?: () => void;
 };
 
-export function EmployeeForm({ employee = null, onCancelEdit }: Props) {
+export function EmployeeForm({
+  employee = null,
+  onCancelEdit,
+  onSaved,
+}: Props) {
   const router = useRouter();
   const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
@@ -66,6 +71,7 @@ export function EmployeeForm({ employee = null, onCancelEdit }: Props) {
         setMessage("Funcionário cadastrado com sucesso!");
       }
 
+      onSaved?.();
       router.refresh();
     });
   }

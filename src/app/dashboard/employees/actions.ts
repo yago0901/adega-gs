@@ -1,8 +1,11 @@
-
 "use server";
 
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/permissions";
+import {
+  listEmployees,
+  type EmployeeListInput,
+} from "@/modules/employees/list";
 import {
   createEmployeeRecord,
   parseCreateEmployeeInput,
@@ -51,6 +54,11 @@ export async function updateEmployee(formData: FormData) {
   revalidatePath("/dashboard");
 
   return { success: true };
+}
+
+export async function listEmployeesAction(input: EmployeeListInput = {}) {
+  await requireAdmin();
+  return listEmployees(input);
 }
 
 export async function toggleEmployeeStatus(employeeId: string) {

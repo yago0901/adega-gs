@@ -1,25 +1,35 @@
 "use client";
 
-import { Fragment, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useMemo, useState, useTransition } from "react";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ListPagination } from "@/components/data-table/list-pagination";
+import { SortableHeader } from "@/components/data-table/sortable-header";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { usePaginatedListState } from "@/hooks/use-paginated-list";
+import type { PaginatedResult } from "@/lib/list-query";
+import type { EmployeeListItem } from "@/modules/employees/list";
 import { EmployeeForm } from "./employee-form";
-import { toggleEmployeeStatus } from "./actions";
-
-type Employee = {
-  id: string;
-  name: string;
-  username: string | null;
-  email: string;
-  active: boolean;
-  createdAt: Date;
-  accesses: {
-    module: string;
-    canManageCashRegister: boolean;
-  }[];
-};
+import { listEmployeesAction, toggleEmployeeStatus } from "./actions";
 
 type Props = {
-  employees: Employee[];
+  initial: PaginatedResult<EmployeeListItem>;
 };
 
 const moduleNames: Record<string, string> = {
@@ -33,142 +43,242 @@ const moduleNames: Record<string, string> = {
   CUSTOMERS: "Clientes",
 };
 
-export function EmployeeManagement({ employees }: Props) {
+export function EmployeeManagement({ initial }: Props) {
   const [selectedEmployee, setSelectedEmployee] =
-    useState<Employee | null>(null);
-
-  const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+    useState<EmployeeListItem | null>(null);
+  const [active, setActive] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
   const [feedback, setFeedback] = useState("");
 
-  function handleToggleStatus(employee: Employee) {
+  const queryClient = useQueryClient();
+  const [isPending, startTransition] = useTransition();
+
+  const {
+    search,
+    page,
+    sortBy,
+    sortDir,
+    filters: baseFilters,
+    debouncedSearch,
+    setPage,
+    toggleSort,
+    onSearchChange,
+    resetPageAnd,
+  } = usePaginatedListState({
+    sortBy: "name",
+    sortDir: "asc",
+    pageSize: 20,
+  });
+
+  const filters = useMemo(
+    () => ({
+      ...baseFilters,
+      active,
+    }),
+    [baseFilters, active],
+  );
+
+  const query = useQuery({
+    queryKey: ["employees", filters],
+    queryFn: () => listEmployeesAction(filters),
+    initialData:
+      page === 1 &&
+      !debouncedSearch &&
+      active === "ALL" &&
+      sortBy === "name" &&
+      sortDir === "asc"
+        ? initial
+        : undefined,
+    placeholderData: keepPreviousData,
+  });
+
+  const result = query.data;
+  const employees = result?.items ?? [];
+
+  function handleToggleStatus(employee: EmployeeListItem) {
     setFeedback("");
 
     startTransition(async () => {
-      const result = await toggleEmployeeStatus(employee.id);
+      const toggleResult = await toggleEmployeeStatus(employee.id);
 
-      if (result.error) {
-        setFeedback(result.error);
+      if (toggleResult.error) {
+        setFeedback(toggleResult.error);
         return;
       }
 
-      router.refresh();
+      await queryClient.invalidateQueries({ queryKey: ["employees"] });
     });
   }
 
   return (
     <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,1.8fr)_minmax(300px,1fr)]">
-
-      <section className="min-w-0 rounded-xl border border-zinc-200 bg-white p-5">
-        <div className="mb-5 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">
-            Funcionários cadastrados
-          </h2>
-
-          <span className="text-sm text-zinc-500">
-            {employees.length} cadastrados
-          </span>
+      <section className="min-w-0 space-y-4">
+        <div className="grid gap-3 rounded-xl border border-zinc-200 bg-white p-4 md:grid-cols-2">
+          <Input
+            value={search}
+            onChange={(event) => onSearchChange(event.target.value)}
+            placeholder="Buscar por nome, usuário ou e-mail..."
+          />
+          <Select
+            value={active}
+            onValueChange={(value) =>
+              resetPageAnd(() =>
+                setActive((value as "ALL" | "ACTIVE" | "INACTIVE") ?? "ALL"),
+              )
+            }
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Situação" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">Todos</SelectItem>
+              <SelectItem value="ACTIVE">Ativos</SelectItem>
+              <SelectItem value="INACTIVE">Inativos</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
-        {employees.length === 0 ? (
-          <p className="py-8 text-center text-sm text-zinc-500">
-            Nenhum funcionário cadastrado.
-          </p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-zinc-200 text-zinc-500">
-                  <th className="pb-3 pr-4 font-medium">Funcionário</th>
-                  <th className="pb-3 pr-4 font-medium">E-mail</th>
-                  <th className="pb-3 pr-4 font-medium">Permissões</th>
-                  <th className="pb-3 pr-4 font-medium">Situação</th>
-                  <th className="pb-3 font-medium">Ações</th>
-                </tr>
-              </thead>
+        {query.isFetching && (
+          <p className="text-xs text-muted-foreground">Atualizando lista...</p>
+        )}
 
-              <tbody>
+        <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white p-5">
+          <div className="mb-5 flex items-center justify-between">
+            <h2 className="text-lg font-semibold">Funcionários cadastrados</h2>
+            <span className="text-sm text-zinc-500">
+              {result?.total ?? 0} cadastrados
+            </span>
+          </div>
+
+          {employees.length === 0 ? (
+            <p className="py-8 text-center text-sm text-zinc-500">
+              {search || active !== "ALL"
+                ? "Nenhum funcionário encontrado com esses filtros."
+                : "Nenhum funcionário cadastrado."}
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>
+                    <SortableHeader
+                      label="Funcionário"
+                      column="name"
+                      sortBy={sortBy}
+                      sortDir={sortDir}
+                      onSort={toggleSort}
+                    />
+                  </TableHead>
+                  <TableHead>
+                    <SortableHeader
+                      label="E-mail"
+                      column="email"
+                      sortBy={sortBy}
+                      sortDir={sortDir}
+                      onSort={toggleSort}
+                    />
+                  </TableHead>
+                  <TableHead>Permissões</TableHead>
+                  <TableHead>
+                    <SortableHeader
+                      label="Situação"
+                      column="active"
+                      sortBy={sortBy}
+                      sortDir={sortDir}
+                      onSort={toggleSort}
+                    />
+                  </TableHead>
+                  <TableHead>Ações</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {employees.map((employee) => {
                   const isSelected = selectedEmployee?.id === employee.id;
 
                   return (
-                    <Fragment key={employee.id}>
-                      <tr className={`border-b border-zinc-100 ${isSelected ? "bg-emerald-50/50" : ""}`}>
-                        <td className="py-4 pr-4">
-                          <p className="font-medium">{employee.name}</p>
-                          <p className="mt-1 text-xs text-zinc-500">
-                            {employee.username
-                              ? `@${employee.username}`
-                              : "Sem usuário"}
-                          </p>
-                        </td>
-
-                        <td className="py-4 pr-4">
-                          {employee.email}
-                        </td>
-
-                        <td className="py-4 pr-4">
-                          <div className="flex flex-wrap gap-1">
-                            {employee.accesses.map((access) => (
-                              <span
-                                key={access.module}
-                                className="rounded-md bg-zinc-100 px-2 py-1 text-xs"
-                              >
-                                {moduleNames[access.module] ?? access.module}
-                              </span>
-                            ))}
-                          </div>
-                        </td>
-
-                        <td className="py-4 pr-4">
-                          <span
-                            className={`rounded-full px-2 py-1 text-xs font-medium ${employee.active
-                              ? "bg-green-100 text-green-700"
-                              : "bg-red-100 text-red-700"
-                              }`}
+                    <TableRow
+                      key={employee.id}
+                      className={isSelected ? "bg-emerald-50/50" : undefined}
+                    >
+                      <TableCell>
+                        <p className="font-medium">{employee.name}</p>
+                        <p className="mt-1 text-xs text-zinc-500">
+                          {employee.username
+                            ? `@${employee.username}`
+                            : "Sem usuário"}
+                        </p>
+                      </TableCell>
+                      <TableCell>{employee.email}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {employee.accesses.map((access) => (
+                            <span
+                              key={access.module}
+                              className="rounded-md bg-zinc-100 px-2 py-1 text-xs"
+                            >
+                              {moduleNames[access.module] ?? access.module}
+                            </span>
+                          ))}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={employee.active ? "default" : "destructive"}
+                        >
+                          {employee.active ? "Ativo" : "Inativo"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              setSelectedEmployee(
+                                isSelected ? null : employee,
+                              )
+                            }
                           >
-                            {employee.active ? "Ativo" : "Inativo"}
-                          </span>
-                        </td>
-
-                        <td className="py-4">
-                          <div className="flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setSelectedEmployee(isSelected ? null : employee)
-                              }
-                              className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700"
-                            >
-                              {isSelected ? "Selecionado" : "Editar"}
-                            </button>
-
-                            <button
-                              type="button"
-                              disabled={isPending}
-                              onClick={() => handleToggleStatus(employee)}
-                              className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${employee.active
-                                ? "border-red-200 text-red-700 hover:bg-red-50"
-                                : "border-green-200 text-green-700 hover:bg-green-50"
-                                }`}
-                            >
-                              {employee.active ? "Desativar" : "Ativar"}
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    </Fragment>
+                            {isSelected ? "Selecionado" : "Editar"}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={isPending}
+                            className={
+                              employee.active
+                                ? "text-red-700 hover:bg-red-50"
+                                : "text-green-700 hover:bg-green-50"
+                            }
+                            onClick={() => handleToggleStatus(employee)}
+                          >
+                            {employee.active ? "Desativar" : "Ativar"}
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
+          )}
+
+          {feedback && (
+            <p className="mt-3 text-sm text-red-600">{feedback}</p>
+          )}
+
+          <div className="border-t">
+            <ListPagination
+              page={result?.page ?? page}
+              pageCount={result?.pageCount ?? 1}
+              total={result?.total ?? 0}
+              pageSize={result?.pageSize ?? 20}
+              isLoading={query.isFetching}
+              onPageChange={setPage}
+            />
           </div>
-        )}
-        {feedback && (
-          <p className="mt-3 text-sm text-red-600">
-            {feedback}
-          </p>
-        )}
+        </div>
       </section>
 
       <section className="min-w-0 rounded-xl border border-zinc-200 bg-white p-5">
@@ -177,14 +287,12 @@ export function EmployeeManagement({ employees }: Props) {
             <h2 className="text-lg font-semibold">
               {selectedEmployee ? "Editar funcionário" : "Novo funcionário"}
             </h2>
-
             <p className="mt-1 text-sm text-zinc-500">
               {selectedEmployee
                 ? `Alterando os dados de ${selectedEmployee.name}.`
                 : "Cadastre uma conta e defina seus acessos."}
             </p>
           </div>
-
           {selectedEmployee && (
             <span className="shrink-0 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
               Editando
@@ -196,6 +304,9 @@ export function EmployeeManagement({ employees }: Props) {
           key={selectedEmployee?.id ?? "new"}
           employee={selectedEmployee}
           onCancelEdit={() => setSelectedEmployee(null)}
+          onSaved={() => {
+            void queryClient.invalidateQueries({ queryKey: ["employees"] });
+          }}
         />
       </section>
     </div>

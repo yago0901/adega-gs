@@ -2,7 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import type { ListQueryInput } from "@/lib/list-query";
 import { requireModuleAccess } from "@/lib/permissions";
+import { listCustomers } from "@/modules/customers/list";
 import {
   createCustomerRecord,
   deactivateCustomerRecord,
@@ -10,6 +12,11 @@ import {
   parseCustomerPersonalData,
   updateCustomerRecord,
 } from "@/modules/customers/service";
+
+export async function listCustomersAction(input: ListQueryInput = {}) {
+  await requireModuleAccess("CUSTOMERS");
+  return listCustomers(input);
+}
 
 export async function createCustomer(formData: FormData) {
   await requireModuleAccess("CUSTOMERS");

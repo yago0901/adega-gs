@@ -1,6 +1,6 @@
 import { connection } from "next/server";
 import { requireAdmin } from "@/lib/permissions";
-import { listEmployeesWithAccess } from "@/modules/employees/queries";
+import { listEmployees } from "@/modules/employees/list";
 import { EmployeeManagement } from "./employee-management";
 import Link from "next/link";
 
@@ -10,7 +10,7 @@ export default async function EmployeesPage() {
   await connection();
   await requireAdmin();
 
-  const employees = await listEmployeesWithAccess();
+  const initial = await listEmployees({ page: 1, pageSize: 20 });
 
   return (
     <div className="space-y-6">
@@ -29,7 +29,7 @@ export default async function EmployeesPage() {
         </p>
       </div>
 
-      <EmployeeManagement employees={employees} />
+      <EmployeeManagement initial={initial} />
     </div>
   );
 }

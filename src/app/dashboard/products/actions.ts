@@ -2,7 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import type { ListQueryInput } from "@/lib/list-query";
 import { requireModuleAccess } from "@/lib/permissions";
+import { listProducts } from "@/modules/products/list";
 import {
   createCategory as createCategoryRecord,
   createProduct as createProductRecord,
@@ -10,6 +12,11 @@ import {
   deleteCategory as deleteCategoryRecord,
   updateProduct as updateProductRecord,
 } from "@/modules/products/service";
+
+export async function listProductsAction(input: ListQueryInput = {}) {
+  await requireModuleAccess("PRODUCTS");
+  return listProducts(input);
+}
 
 export async function createCategory(formData: FormData) {
   await requireModuleAccess("PRODUCTS");

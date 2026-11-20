@@ -4,12 +4,21 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireModuleAccess } from "@/lib/permissions";
 import {
+  listMotoboys,
+  type MotoboyListInput,
+} from "@/modules/motoboys/list";
+import {
   createMotoboyRecord,
   deactivateMotoboyRecord,
   parseMotoboyData,
   reactivateMotoboyRecord,
   updateMotoboyRecord,
 } from "@/modules/motoboys/service";
+
+export async function listMotoboysAction(input: MotoboyListInput = {}) {
+  await requireModuleAccess("MOTOBOYS");
+  return listMotoboys(input);
+}
 
 export async function createMotoboy(formData: FormData) {
   await requireModuleAccess("MOTOBOYS");

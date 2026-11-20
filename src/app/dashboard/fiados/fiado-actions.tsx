@@ -2,6 +2,7 @@
 "use client";
 
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import ReceiveDebtModal from "../pos/ReceiveDebtModal";
 
@@ -19,6 +20,7 @@ export function FiadoActions({
   showDetailsLink?: boolean;
 }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [showModal, setShowModal] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -71,6 +73,7 @@ export function FiadoActions({
               }`,
             );
 
+            void queryClient.invalidateQueries({ queryKey: ["fiados"] });
             router.refresh();
           }}
         />

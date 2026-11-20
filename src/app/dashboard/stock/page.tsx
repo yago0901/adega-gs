@@ -1,17 +1,19 @@
 
 import Link from "next/link";
 import { Suspense } from "react";
+import { connection } from "next/server";
 
 import { requireModuleAccess } from "@/lib/permissions";
+import { listStockItems } from "@/modules/stock/list";
 import { listActiveProductsWithStockDetails } from "@/modules/stock/queries";
 
 import {
   registerStockEntry,
   registerStockLoss,
   registerStockAdjustment,
-  openCommercialPackaging,
-  openStockBottle,
 } from "./actions";
+import { StockListClient } from "./stock-list-client";
+import { StockMutationForm } from "./stock-mutation-form";
 
 export const metadata = {
   title: "Estoque | Adega GS",
@@ -21,12 +23,6 @@ function formatCurrency(value: number) {
   return value.toLocaleString("pt-BR", {
     style: "currency",
     currency: "BRL",
-  });
-}
-
-function formatQuantity(value: number) {
-  return value.toLocaleString("pt-BR", {
-    maximumFractionDigits: 3,
   });
 }
 
@@ -56,9 +52,13 @@ export default function StockPage() {
 }
 
 async function StockContent() {
+  await connection();
   await requireModuleAccess("STOCK");
 
-  const products = await listActiveProductsWithStockDetails();
+  const [products, initialStockItems] = await Promise.all([
+    listActiveProductsWithStockDetails(),
+    listStockItems({ page: 1, pageSize: 20 }),
+  ]);
 
   const stockItems = products
     .filter((product) => product.stockItem !== null)
@@ -73,19 +73,17 @@ async function StockContent() {
       const isCommercialPackaging = Boolean(childProduct);
 
       const closedQuantity = packaging
-        ? packaging.balance?.quantity.toNumber() ?? 0
+        ? (packaging.balance?.quantity.toNumber() ?? 0)
         : isCommercialPackaging
           ? stockQuantity
           : 0;
 
-      const openQuantity = isCommercialPackaging
-        ? 0
-        : stockQuantity;
+      const openQuantity = isCommercialPackaging ? 0 : stockQuantity;
 
       const conversionFactor = packaging
         ? packaging.conversionFactor.toNumber()
         : isCommercialPackaging
-          ? product.packagingChildQuantity?.toNumber() ?? 1
+          ? (product.packagingChildQuantity?.toNumber() ?? 1)
           : 1;
 
       const minimum = stockItem.minStock.toNumber();
@@ -101,16 +99,11 @@ async function StockContent() {
       return {
         id: product.id,
         name: product.name,
-        code: product.code,
-        category: product.category.name,
-        stockItemName: stockItem.name,
         unit: stockItem.unit,
         hasPackaging: Boolean(packaging),
         isCommercialPackaging,
         packagingName: packaging?.name ?? null,
         childProductName: childProduct?.name ?? null,
-        closedQuantity,
-        openQuantity,
         conversionFactor,
         minimum,
         totalValue,
@@ -119,9 +112,7 @@ async function StockContent() {
     });
 
   const totalProducts = stockItems.length;
-
   const lowStock = stockItems.filter((product) => product.isLow);
-
   const totalValue = stockItems.reduce(
     (total, product) => total + product.totalValue,
     0,
@@ -161,190 +152,29 @@ async function StockContent() {
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white p-5">
-            <p className="text-sm text-slate-500">
-              Itens com estoque baixo
-            </p>
+            <p className="text-sm text-slate-500">Itens com estoque baixo</p>
             <p className="mt-2 text-2xl font-bold text-red-600">
               {lowStock.length}
             </p>
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white p-5">
-            <p className="text-sm text-slate-500">
-              Valor estimado do estoque
-            </p>
+            <p className="text-sm text-slate-500">Valor estimado do estoque</p>
             <p className="mt-2 text-2xl font-bold">
               {formatCurrency(totalValue)}
             </p>
           </div>
         </div>
 
-        <div className="mt-8 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-100 p-5">
-            <h2 className="font-bold">Itens em estoque</h2>
-            <p className="mt-1 text-sm text-slate-500">
-              Embalagens fechadas e quantidades já abertas são exibidas
-              separadamente.
-            </p>
-          </div>
-
-          {stockItems.length === 0 ? (
-            <div className="p-10 text-center text-sm text-slate-500">
-              Nenhum item de estoque cadastrado.
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-slate-50 text-xs uppercase text-slate-500">
-                  <tr>
-                    <th className="px-5 py-4">Produto</th>
-                    <th className="px-5 py-4">Categoria</th>
-                    <th className="px-5 py-4">Fechados</th>
-                    <th className="px-5 py-4">Disponível aberto</th>
-                    <th className="px-5 py-4">Mínimo</th>
-                    <th className="px-5 py-4">Situação</th>
-                    <th className="px-5 py-4">Ações</th>
-                  </tr>
-                </thead>
-
-                <tbody className="divide-y divide-slate-100">
-                  {stockItems.map((product) => (
-                    <tr key={product.id} className="hover:bg-slate-50">
-                      <td className="px-5 py-4 font-semibold">
-                        {product.name}
-                        <p className="mt-1 text-xs font-normal text-slate-400">
-                          {product.code}
-                        </p>
-                      </td>
-
-                      <td className="px-5 py-4">
-                        {product.category}
-                      </td>
-
-                      <td className="px-5 py-4">
-                        {product.isCommercialPackaging ? (
-                          <div>
-                            <span className="font-semibold">
-                              {formatQuantity(product.closedQuantity)} un.
-                            </span>
-                            <p className="mt-1 text-xs text-slate-500">
-                              Cada embalagem:{" "}
-                              {formatQuantity(product.conversionFactor)}{" "}
-                              {product.childProductName}
-                            </p>
-                          </div>
-                        ) : product.hasPackaging ? (
-                          `${formatQuantity(product.closedQuantity)} ${product.packagingName ?? "embalagens"
-                          }`
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-
-                      <td className="px-5 py-4 font-semibold">
-                        {product.isCommercialPackaging
-                          ? "—"
-                          : `${formatQuantity(product.openQuantity)} ${getUnitLabel(
-                            product.unit,
-                          )}`}
-                      </td>
-
-                      <td className="px-5 py-4">
-                        {formatQuantity(product.minimum)}{" "}
-                        {getUnitLabel(product.unit)}
-                      </td>
-
-                      <td className="px-5 py-4">
-                        <span
-                          className={`rounded-full px-3 py-1 text-xs font-semibold ${product.isLow
-                              ? "bg-red-50 text-red-700"
-                              : "bg-emerald-50 text-emerald-700"
-                            }`}
-                        >
-                          {product.isLow ? "Estoque baixo" : "Normal"}
-                        </span>
-                      </td>
-
-                      <td className="px-5 py-4">
-                        <div className="flex flex-wrap gap-3">
-                          {product.isCommercialPackaging && (
-                            <form
-                              action={openCommercialPackaging}
-                              className="flex flex-wrap items-center gap-2"
-                            >
-                              <input
-                                type="hidden"
-                                name="productId"
-                                value={product.id}
-                              />
-
-                              <input
-                                type="number"
-                                name="quantity"
-                                min="1"
-                                step="1"
-                                defaultValue="1"
-                                required
-                                aria-label={`Quantidade de embalagens para abrir de ${product.name}`}
-                                className="w-16 rounded border border-slate-300 p-1.5"
-                              />
-
-                              <button
-                                type="submit"
-                                className="font-semibold text-blue-700 hover:underline"
-                              >
-                                Abrir embalagem(ns)
-                              </button>
-                            </form>
-                          )}
-
-                          {product.hasPackaging &&
-                            !product.isCommercialPackaging &&
-                            product.unit === "ML" && (
-                              <form
-                                action={openStockBottle}
-                                className="flex flex-wrap items-center gap-2"
-                              >
-                                <input
-                                  type="hidden"
-                                  name="productId"
-                                  value={product.id}
-                                />
-
-                                <input
-                                  type="number"
-                                  name="quantity"
-                                  min="1"
-                                  step="1"
-                                  defaultValue="1"
-                                  required
-                                  aria-label={`Quantidade de garrafas para abrir de ${product.name}`}
-                                  className="w-16 rounded border border-slate-300 p-1.5"
-                                />
-
-                                <button
-                                  type="submit"
-                                  className="font-semibold text-purple-700 hover:underline"
-                                >
-                                  Abrir garrafa(s)
-                                </button>
-                              </form>
-                            )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+        <div className="mt-8">
+          <StockListClient initial={initialStockItems} />
         </div>
 
         <section
           id="movimentar"
           className="mt-8 grid scroll-mt-6 gap-5 lg:grid-cols-3"
         >
-          <form
+          <StockMutationForm
             action={registerStockEntry}
             className="space-y-4 rounded-xl border border-slate-200 bg-white p-5"
           >
@@ -410,16 +240,14 @@ async function StockContent() {
             >
               Registrar entrada
             </button>
-          </form>
+          </StockMutationForm>
 
-          <form
+          <StockMutationForm
             action={registerStockLoss}
             className="space-y-4 rounded-xl border border-slate-200 bg-white p-5"
           >
             <div>
-              <h2 className="font-bold text-red-600">
-                Registrar perda
-              </h2>
+              <h2 className="font-bold text-red-600">Registrar perda</h2>
               <p className="mt-1 text-xs text-slate-500">
                 Retira quantidade do estoque.
               </p>
@@ -478,16 +306,14 @@ async function StockContent() {
             >
               Registrar perda
             </button>
-          </form>
+          </StockMutationForm>
 
-          <form
+          <StockMutationForm
             action={registerStockAdjustment}
             className="space-y-4 rounded-xl border border-slate-200 bg-white p-5"
           >
             <div>
-              <h2 className="font-bold text-slate-700">
-                Ajustar inventário
-              </h2>
+              <h2 className="font-bold text-slate-700">Ajustar inventário</h2>
               <p className="mt-1 text-xs text-slate-500">
                 Informa a quantidade física encontrada na contagem.
               </p>
@@ -546,7 +372,7 @@ async function StockContent() {
             >
               Ajustar estoque
             </button>
-          </form>
+          </StockMutationForm>
         </section>
       </div>
     </main>
