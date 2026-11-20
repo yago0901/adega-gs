@@ -1,71 +1,7 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
-
-type PosProductType =
-  | "STANDARD"
-  | "SUPPLY"
-  | "FRACTIONAL"
-  | "COMBO";
-
-function getDirectStock(
-  stockItem: {
-    balance: { quantity: { toString(): string } } | null;
-  } | null,
-  stockPackaging: {
-    balance: { quantity: { toString(): string } } | null;
-  } | null,
-) {
-  if (stockPackaging) {
-    return Number(stockPackaging.balance?.quantity.toString() ?? 0);
-  }
-
-  return Number(stockItem?.balance?.quantity.toString() ?? 0);
-}
-
-function getOptionAvailability(option: {
-  quantity: { toString(): string };
-  stockItem: {
-    balance: { quantity: { toString(): string } } | null;
-  };
-}) {
-  const required = Number(option.quantity.toString());
-  const available = Number(
-    option.stockItem.balance?.quantity.toString() ?? 0,
-  );
-
-  if (required <= 0) return 0;
-
-  return Math.max(0, Math.floor(available / required));
-}
-
-function getCompositionAvailability(
-  groups: {
-    minSelections: number;
-    options: {
-      quantity: { toString(): string };
-      stockItem: {
-        balance: { quantity: { toString(): string } } | null;
-      };
-    }[];
-  }[],
-) {
-  const requiredGroups = groups.filter(
-    (group) => group.minSelections > 0,
-  );
-
-  if (requiredGroups.length === 0) return 0;
-
-  const groupAvailabilities = requiredGroups.map((group) => {
-    if (group.options.length === 0) return 0;
-
-    return Math.max(
-      ...group.options.map(getOptionAvailability),
-    );
-  });
-
-  return Math.min(...groupAvailabilities);
-}
+import { searchPosProducts } from "./product-search";
 
 export async function loadPosPageData(userId: string) {
   const user = await prisma.user.findUnique({
@@ -75,10 +11,8 @@ export async function loadPosPageData(userId: string) {
     select: {
       role: true,
       accesses: {
-        where: {
-          module: "POS",
-        },
         select: {
+          module: true,
           canManageCashRegister: true,
         },
       },
@@ -88,10 +22,14 @@ export async function loadPosPageData(userId: string) {
   const canManageCashRegister =
     user?.role === "ADMIN" ||
     user?.accesses.some(
-      (access) => access.canManageCashRegister,
+      (access) =>
+        access.module === "POS" && access.canManageCashRegister,
     ) === true;
 
-  const [cashRegister, products, customers, deliveries, motoboys] =
+  const showBackToDashboard =
+    user?.role === "ADMIN" || (user?.accesses.length ?? 0) > 1;
+
+  const [cashRegister, productsPage, customers, deliveries, motoboys] =
     await Promise.all([
       prisma.cashRegister.findFirst({
         where: {
@@ -104,97 +42,11 @@ export async function loadPosPageData(userId: string) {
         },
       }),
 
-      prisma.product.findMany({
-        where: {
-          active: true,
-          type: {
-            in: ["STANDARD", "SUPPLY", "FRACTIONAL", "COMBO"],
-          },
-        },
-        include: {
-          stockItem: {
-            include: {
-              balance: true,
-            },
-          },
-          stockPackaging: {
-            include: {
-              balance: true,
-            },
-          },
-          composition: {
-            include: {
-              groups: {
-                orderBy: {
-                  position: "asc",
-                },
-                include: {
-                  options: {
-                    orderBy: {
-                      position: "asc",
-                    },
-                    include: {
-                      stockItem: {
-                        include: {
-                          balance: true,
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-          comboItems: {
-            include: {
-              componentProduct: {
-                include: {
-                  stockItem: {
-                    include: {
-                      balance: true,
-                    },
-                  },
-                  stockPackaging: {
-                    include: {
-                      balance: true,
-                    },
-                  },
-                  composition: {
-                    include: {
-                      groups: {
-                        orderBy: {
-                          position: "asc",
-                        },
-                        include: {
-                          options: {
-                            orderBy: {
-                              position: "asc",
-                            },
-                            include: {
-                              stockItem: {
-                                include: {
-                                  balance: true,
-                                },
-                              },
-                            },
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-          packagingParentProducts: {
-            select: {
-              id: true,
-            },
-          },
-        },
-        orderBy: {
-          name: "asc",
-        },
+      searchPosProducts({
+        page: 1,
+        pageSize: 24,
+        sortBy: "name",
+        sortDir: "asc",
       }),
 
       prisma.customer.findMany({
@@ -368,85 +220,16 @@ export async function loadPosPageData(userId: string) {
     },
   }));
 
-  const formattedProducts = products.map((product) => {
-    let stock = 0;
-
-    if (product.type === "FRACTIONAL") {
-      stock = getCompositionAvailability(
-        product.composition?.groups ?? [],
-      );
-    } else if (product.type === "COMBO") {
-      if (product.comboItems.length > 0) {
-        stock = Math.max(
-          0,
-          Math.floor(
-            Math.min(
-              ...product.comboItems.map((item) => {
-                const component = item.componentProduct;
-                const required = Number(item.quantity.toString());
-
-                if (required <= 0) return 0;
-
-                if (component.type === "COMBO") return 0;
-
-                const available =
-                  component.type === "FRACTIONAL"
-                    ? getCompositionAvailability(
-                        component.composition?.groups ?? [],
-                      )
-                    : getDirectStock(
-                        component.stockItem,
-                        component.stockPackaging,
-                      );
-
-                return available / required;
-              }),
-            ),
-          ),
-        );
-      }
-    } else {
-      stock = getDirectStock(
-        product.stockItem,
-        product.stockPackaging,
-      );
-    }
-
-    return {
-      id: product.id,
-      code: product.code,
-      name: product.name,
-      type: product.type as PosProductType,
-      salePrice: product.salePrice.toString(),
-      unit: "UNIT",
-      stock: String(stock),
-      canOpenFromPackaging:
-        Boolean(product.stockPackaging) ||
-        product.packagingParentProducts.length > 0,
-
-      composition: product.composition
-        ? {
-            groups: product.composition.groups.map((group) => ({
-              id: group.id,
-              name: group.name,
-              required: group.minSelections > 0,
-              options: group.options.map((option) => ({
-                id: option.id,
-                stockItemId: option.stockItemId,
-                name: option.stockItem.name,
-                unit: option.stockItem.unit,
-                quantity: option.quantity.toString(),
-                available: String(getOptionAvailability(option)),
-              })),
-            })),
-          }
-        : null,
-    };
-  });
-
   return {
     canManageCashRegister,
-    products: formattedProducts,
+    showBackToDashboard,
+    products: productsPage.items,
+    productsMeta: {
+      total: productsPage.total,
+      page: productsPage.page,
+      pageSize: productsPage.pageSize,
+      pageCount: productsPage.pageCount,
+    },
     customers: formattedCustomers,
     deliveries: formattedDeliveries,
     motoboys,

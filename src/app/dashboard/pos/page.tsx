@@ -29,7 +29,9 @@ async function PosContent() {
 
   const {
     canManageCashRegister,
+    showBackToDashboard,
     products,
+    productsMeta,
     customers,
     deliveries,
     motoboys,
@@ -39,8 +41,10 @@ async function PosContent() {
   return (
     <PosClient
       products={products}
+      productsMeta={productsMeta}
       customers={customers}
       canManageCashRegister={canManageCashRegister}
+      showBackToDashboard={showBackToDashboard}
       deliveries={deliveries}
       motoboys={motoboys}
       cashRegister={cashRegister}

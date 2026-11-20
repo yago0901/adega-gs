@@ -1,98 +1,42 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
-
-type Sale = {
-  id: string;
-  status: "PENDING_DELIVERY" | "COMPLETED" | "CANCELLED";
-  isDelivery: boolean;
-  payments: {
-    paymentMethod: string;
-    amount: number;
-  }[];
-  deliveryPayments: {
-    paymentMethod: string;
-    amount: number;
-    deliveryType?: "PREPAID" | "TO_COLLECT";
-  }[];
-  accountAmount: number;
-  total: number;
-  deliveryFee: number;
-  cashReceived: number;
-  changeAmount: number;
-  createdAt: string;
-  cancelledAt: string | null;
-  employee: string;
-  customer: {
-    name: string;
-    phone: string;
-  } | null;
-  items: {
-    id: string;
-    productName: string;
-    productCode: string;
-    quantity: number;
-    unit: string;
-    unitPrice: number;
-    total: number;
-  }[];
-};
-
-type DebtPayment = {
-  id: string;
-  kind: "DEBT_RECEIPT" | "CANCELLATION_CREDIT";
-  description: string | null;
-  amount: number;
-  createdAt: string;
-  employee: string;
-  customer: {
-    name: string;
-    phone: string;
-  };
-  payments: {
-    paymentMethod: string;
-    amount: number;
-  }[];
-  cashReceived: number;
-  changeAmount: number;
-};
-
-
-type CashRegisterHistory = {
-  id: string;
-  status: "OPEN" | "CLOSED";
-  openingAmount: number;
-  expectedAmount: number | null;
-  countedAmount: number | null;
-  difference: number | null;
-  openedAt: string;
-  closedAt: string | null;
-  openedBy: string;
-  closedBy: string | null;
-  movements: {
-    id: string;
-    type: "SUPPLY" | "WITHDRAWAL";
-    amount: number;
-    description: string | null;
-    createdAt: string;
-    employee: string;
-  }[];
-  sales: {
-    id: string;
-    status: "PENDING_DELIVERY" | "COMPLETED" | "CANCELLED";
-    total: number;
-    cashReceived: number;
-    changeAmount: number;
-    payments: {
-      paymentMethod: string;
-      amount: number;
-    }[];
-    accountAmount: number;
-    createdAt: string;
-  }[];
-};
-
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { DateRangeFilter } from "@/components/data-table/date-range-filter";
+import { ListPagination } from "@/components/data-table/list-pagination";
+import { SortableHeader } from "@/components/data-table/sortable-header";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import type { SortDirection } from "@/lib/list-query";
+import type {
+  HistoryCashRegisterItem,
+  HistoryCreditItem,
+  HistorySaleItem,
+} from "@/modules/history/list";
+import type { PaginatedResult } from "@/lib/list-query";
+import {
+  getCashRegisterDetailsAction,
+  listHistoryCashRegistersAction,
+  listHistoryCreditsAction,
+  listHistorySalesAction,
+} from "./actions";
 
 const currency = new Intl.NumberFormat("pt-BR", {
   style: "currency",
@@ -106,500 +50,539 @@ const paymentLabels: Record<string, string> = {
   DEBIT_CARD: "Débito",
 };
 
-function getSaleDisplayPayments(sale: {
-  payments: { paymentMethod: string; amount: number }[];
-  deliveryPayments?: { paymentMethod: string; amount: number }[];
-}) {
-  if (sale.payments.length > 0) {
-    return sale.payments;
-  }
+type HistoryClientProps = {
+  initialSales: PaginatedResult<HistorySaleItem>;
+  initialCredits: PaginatedResult<HistoryCreditItem>;
+  initialCashRegisters: PaginatedResult<HistoryCashRegisterItem>;
+};
 
-  return sale.deliveryPayments ?? [];
+function getSalePayments(sale: HistorySaleItem) {
+  return sale.payments.length > 0 ? sale.payments : sale.deliveryPayments;
 }
 
-function getPaymentLabel(
-  payments: { paymentMethod: string; amount: number }[],
-  accountAmount: number,
-) {
-  const labels = payments.map(
+function paymentLabel(sale: HistorySaleItem) {
+  const labels = getSalePayments(sale).map(
     (item) => paymentLabels[item.paymentMethod] ?? item.paymentMethod,
   );
-
-  if (accountAmount > 0) {
-    labels.push("Fiado");
-  }
-
+  if (sale.accountAmount > 0) labels.push("Fiado");
   return labels.length > 0 ? labels.join(", ") : "Não informado";
 }
 
-type HistoryClientProps = {
-  sales: Sale[];
-  cashRegisters: CashRegisterHistory[];
-  debtPayments: DebtPayment[];
-};
-
 export function HistoryClient({
-  sales,
-  cashRegisters,
-  debtPayments,
+  initialSales,
+  initialCredits,
+  initialCashRegisters,
 }: HistoryClientProps) {
+  const [tab, setTab] = useState<"SALES" | "CREDITS" | "CASH_REGISTERS">(
+    "SALES",
+  );
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("ALL");
   const [payment, setPayment] = useState("ALL");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
-  const [activeTab, setActiveTab] = useState<"SALES" | "CASH_REGISTERS">("SALES");
-  const [selectedCashRegister, setSelectedCashRegister] =
-    useState<CashRegisterHistory | null>(null);
-  const [selectedDebtPayment, setSelectedDebtPayment] =
-    useState<DebtPayment | null>(null);
+  const [page, setPage] = useState(1);
+  const [sortBy, setSortBy] = useState("createdAt");
+  const [sortDir, setSortDir] = useState<SortDirection>("desc");
+  const [selectedSale, setSelectedSale] = useState<HistorySaleItem | null>(
+    null,
+  );
+  const [selectedCredit, setSelectedCredit] =
+    useState<HistoryCreditItem | null>(null);
+  const [selectedCashRegisterId, setSelectedCashRegisterId] = useState<
+    string | null
+  >(null);
 
-  const filteredHistoryEvents = useMemo(() => {
-    const events = [
-      ...sales.map((sale) => ({
-        type: "SALE" as const,
-        id: sale.id,
-        createdAt: sale.createdAt,
-        sale,
-      })),
-      ...debtPayments.map((debtPayment) => ({
-        type: "DEBT_PAYMENT" as const,
-        id: debtPayment.id,
-        createdAt: debtPayment.createdAt,
-        debtPayment,
-      })),
-    ];
+  const debouncedSearch = useDebouncedValue(search, 250);
 
-    return events
-      .filter((event) => {
-        const date = event.createdAt.slice(0, 10);
+  const filters = useMemo(
+    () => ({
+      search: debouncedSearch,
+      status,
+      payment,
+      startDate,
+      endDate,
+      page,
+      pageSize: 20,
+      sortBy,
+      sortDir,
+    }),
+    [
+      debouncedSearch,
+      status,
+      payment,
+      startDate,
+      endDate,
+      page,
+      sortBy,
+      sortDir,
+    ],
+  );
 
-        const employee =
-          event.type === "SALE"
-            ? event.sale.employee
-            : event.debtPayment.employee;
+  function resetPageAnd(updater: () => void) {
+    updater();
+    setPage(1);
+  }
 
-        const customer =
-          event.type === "SALE"
-            ? event.sale.customer?.name ?? ""
-            : event.debtPayment.customer.name;
+  function toggleSort(column: string) {
+    if (sortBy === column) {
+      setSortDir((current) => (current === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(column);
+      setSortDir(column === "createdAt" || column === "openedAt" ? "desc" : "asc");
+    }
+    setPage(1);
+  }
 
-        const matchesSearch =
-          event.id.toLowerCase().includes(search.toLowerCase()) ||
-          employee.toLowerCase().includes(search.toLowerCase()) ||
-          customer.toLowerCase().includes(search.toLowerCase());
+  const salesQuery = useQuery({
+    queryKey: ["history-sales", filters],
+    queryFn: () => listHistorySalesAction(filters),
+    enabled: tab === "SALES",
+    initialData:
+      tab === "SALES" &&
+      page === 1 &&
+      !debouncedSearch &&
+      status === "ALL" &&
+      payment === "ALL" &&
+      !startDate &&
+      !endDate &&
+      sortBy === "createdAt" &&
+      sortDir === "desc"
+        ? initialSales
+        : undefined,
+    placeholderData: keepPreviousData,
+  });
 
-        const matchesStatus =
-          status === "ALL" ||
-          (event.type === "SALE" &&
-            (status === "DELIVERY"
-              ? event.sale.isDelivery
-              : event.sale.status === status));
+  const creditsQuery = useQuery({
+    queryKey: ["history-credits", filters],
+    queryFn: () => listHistoryCreditsAction(filters),
+    enabled: tab === "CREDITS",
+    initialData:
+      tab === "CREDITS" &&
+      page === 1 &&
+      !debouncedSearch &&
+      status === "ALL" &&
+      payment === "ALL" &&
+      !startDate &&
+      !endDate &&
+      sortBy === "createdAt" &&
+      sortDir === "desc"
+        ? initialCredits
+        : undefined,
+    placeholderData: keepPreviousData,
+  });
 
-        const matchesPayment =
-          payment === "ALL" ||
-          (event.type === "SALE"
-            ? payment === "FIADO"
-              ? event.sale.accountAmount > 0
-              : getSaleDisplayPayments(event.sale).some(
-                  (item) => item.paymentMethod === payment,
-                )
-            : event.debtPayment.kind === "CANCELLATION_CREDIT"
-              ? payment === "ALL"
-              : payment !== "FIADO" &&
-                event.debtPayment.payments.some(
-                  (item) => item.paymentMethod === payment,
-                ));
+  const cashRegistersQuery = useQuery({
+    queryKey: ["history-cash-registers", filters],
+    queryFn: () => listHistoryCashRegistersAction(filters),
+    enabled: tab === "CASH_REGISTERS",
+    initialData:
+      tab === "CASH_REGISTERS" &&
+      page === 1 &&
+      !debouncedSearch &&
+      !startDate &&
+      !endDate &&
+      sortBy === "openedAt" &&
+      sortDir === "desc"
+        ? initialCashRegisters
+        : undefined,
+    placeholderData: keepPreviousData,
+  });
 
-        const matchesStart = !startDate || date >= startDate;
-        const matchesEnd = !endDate || date <= endDate;
+  const cashRegisterDetailsQuery = useQuery({
+    queryKey: ["history-cash-register", selectedCashRegisterId],
+    queryFn: () => getCashRegisterDetailsAction(selectedCashRegisterId!),
+    enabled: Boolean(selectedCashRegisterId),
+  });
 
-        return (
-          matchesSearch &&
-          matchesStatus &&
-          matchesPayment &&
-          matchesStart &&
-          matchesEnd
-        );
-      })
-      .sort(
-        (a, b) =>
-          new Date(b.createdAt).getTime() -
-          new Date(a.createdAt).getTime(),
-      );
-  }, [sales, debtPayments, search, status, payment, startDate, endDate]);
+  const activeResult =
+    tab === "SALES"
+      ? salesQuery.data
+      : tab === "CREDITS"
+        ? creditsQuery.data
+        : cashRegistersQuery.data;
 
-  const cashRegisterPaymentSummary = useMemo(() => {
-    const totals: Record<string, number> = {};
-
-    selectedCashRegister?.sales
-      .filter((sale) => sale.status === "COMPLETED")
-      .forEach((sale) => {
-        sale.payments.forEach((payment) => {
-          totals[payment.paymentMethod] =
-            (totals[payment.paymentMethod] ?? 0) + payment.amount;
-        });
-      });
-
-    return totals;
-  }, [selectedCashRegister]);
+  const isFetching =
+    tab === "SALES"
+      ? salesQuery.isFetching
+      : tab === "CREDITS"
+        ? creditsQuery.isFetching
+        : cashRegistersQuery.isFetching;
 
   return (
-    <main className="space-y-6 p-6">
-      <div>
-        <Link
-          href="/dashboard"
-          className="text-sm text-emerald-700 hover:underline"
-        >
-          ← Dashboard
-        </Link>
-
-        <h1 className="mt-3 text-2xl font-bold text-gray-900">
-          Histórico
-        </h1>
-
-        <p className="mt-1 text-sm text-gray-500">
-          Consulte vendas, sessões de caixa e movimentações.
-        </p>
-
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-2">
+        {(
+          [
+            ["SALES", "Vendas"],
+            ["CREDITS", "Créditos / Fiados"],
+            ["CASH_REGISTERS", "Caixas"],
+          ] as const
+        ).map(([value, label]) => (
+          <Button
+            key={value}
+            type="button"
+            variant={tab === value ? "default" : "outline"}
+            onClick={() => {
+              setTab(value);
+              setPage(1);
+              setSortBy(value === "CASH_REGISTERS" ? "openedAt" : "createdAt");
+              setSortDir("desc");
+              setStatus("ALL");
+              setPayment("ALL");
+            }}
+          >
+            {label}
+          </Button>
+        ))}
       </div>
 
-      <div className="flex gap-2 border-b border-gray-200">
-        <button
-          onClick={() => setActiveTab("SALES")}
-          className={`border-b-2 px-4 py-3 text-sm font-medium transition ${activeTab === "SALES"
-            ? "border-emerald-600 text-emerald-700"
-            : "border-transparent text-gray-500 hover:text-gray-700"
-            }`}
-        >
-          Vendas ({sales.length})
-        </button>
+      <section className="grid gap-3 rounded-xl border bg-card p-4 md:grid-cols-2 lg:grid-cols-4">
+        <Input
+          value={search}
+          onChange={(event) =>
+            resetPageAnd(() => setSearch(event.target.value))
+          }
+          placeholder="Buscar..."
+        />
 
-        <button
-          onClick={() => setActiveTab("CASH_REGISTERS")}
-          className={`border-b-2 px-4 py-3 text-sm font-medium transition ${activeTab === "CASH_REGISTERS"
-            ? "border-emerald-600 text-emerald-700"
-            : "border-transparent text-gray-500 hover:text-gray-700"
-            }`}
-        >
-          Caixas ({cashRegisters.length})
-        </button>
-      </div>
+        <DateRangeFilter
+          startDate={startDate}
+          endDate={endDate}
+          onStartDateChange={(value) =>
+            resetPageAnd(() => setStartDate(value))
+          }
+          onEndDateChange={(value) => resetPageAnd(() => setEndDate(value))}
+        />
 
-      {activeTab === "SALES" && (
-        <section className="grid gap-3 rounded-xl border border-gray-200 bg-white p-4 md:grid-cols-5">
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar venda, cliente ou funcionário"
-            className="rounded-lg border p-2 text-sm md:col-span-2"
-          />
-
-          <input
-            type="date"
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-            className="rounded-lg border p-2 text-sm"
-          />
-
-          <input
-            type="date"
-            value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
-            className="rounded-lg border p-2 text-sm"
-          />
-
-          <select
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            className="rounded-lg border p-2 text-sm"
-          >
-            <option value="ALL">Todas as situações</option>
-            <option value="COMPLETED">Concluídas</option>
-            <option value="CANCELLED">Canceladas</option>
-            <option value="PENDING_DELIVERY">Aguardando entrega</option>
-            <option value="DELIVERY">Todas as entregas</option>
-          </select>
-
-          <select
-            value={payment}
-            onChange={(e) => setPayment(e.target.value)}
-            className="rounded-lg border p-2 text-sm md:col-span-2"
-          >
-            <option value="ALL">Todas as formas de pagamento</option>
-            <option value="CASH">Dinheiro</option>
-            <option value="PIX">Pix</option>
-            <option value="CREDIT_CARD">Crédito</option>
-            <option value="DEBIT_CARD">Débito</option>
-            <option value="FIADO">Fiado</option>
-          </select>
-        </section>
-      )}
-
-      {activeTab === "CASH_REGISTERS" && (
-        <section className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-          <div className="border-b p-4">
-            <p className="font-semibold">
-              {cashRegisters.length} sessão(ões) de caixa encontrada(s)
-            </p>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-gray-50 text-gray-500">
-                <tr>
-                  <th className="p-4">Abertura</th>
-                  <th className="p-4">Fechamento</th>
-                  <th className="p-4">Responsável</th>
-                  <th className="p-4">Valor inicial</th>
-                  <th className="p-4">Diferença</th>
-                  <th className="p-4">Situação</th>
-                  <th className="p-4">Ações</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {cashRegisters.map((register) => (
-                  <tr key={register.id} className="border-t">
-                    <td className="p-4">
-                      {new Date(register.openedAt).toLocaleString("pt-BR")}
-                    </td>
-
-                    <td className="p-4">
-                      {register.closedAt
-                        ? new Date(register.closedAt).toLocaleString("pt-BR")
-                        : "Em andamento"}
-                    </td>
-
-                    <td className="p-4">{register.openedBy}</td>
-
-                    <td className="p-4">
-                      {currency.format(register.openingAmount)}
-                    </td>
-
-                    <td className="p-4 font-semibold">
-                      {register.difference !== null
-                        ? currency.format(register.difference)
-                        : "—"}
-                    </td>
-
-                    <td className="p-4">
-                      <span
-                        className={
-                          register.status === "OPEN"
-                            ? "rounded-full bg-emerald-50 px-2 py-1 text-emerald-700"
-                            : "rounded-full bg-gray-100 px-2 py-1 text-gray-700"
-                        }
-                      >
-                        {register.status === "OPEN" ? "Aberto" : "Fechado"}
-                      </span>
-                    </td>
-
-                    <td className="p-4">
-                      <button
-                        onClick={() => setSelectedCashRegister(register)}
-                        className="font-medium text-blue-600 hover:underline"
-                      >
-                        Detalhes
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-
-                {cashRegisters.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="p-8 text-center text-gray-500">
-                      Nenhuma sessão de caixa encontrada.
-                    </td>
-                  </tr>
+        {tab !== "CASH_REGISTERS" && (
+          <>
+            <Select
+              value={status}
+              onValueChange={(value) =>
+                resetPageAnd(() => setStatus(value ?? "ALL"))
+              }
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Situação" />
+              </SelectTrigger>
+              <SelectContent>
+                {tab === "SALES" ? (
+                  <>
+                    <SelectItem value="ALL">Todas as situações</SelectItem>
+                    <SelectItem value="COMPLETED">Concluídas</SelectItem>
+                    <SelectItem value="CANCELLED">Canceladas</SelectItem>
+                    <SelectItem value="PENDING_DELIVERY">
+                      Aguardando entrega
+                    </SelectItem>
+                    <SelectItem value="DELIVERY">Todas as entregas</SelectItem>
+                  </>
+                ) : (
+                  <>
+                    <SelectItem value="ALL">Todos os créditos</SelectItem>
+                    <SelectItem value="DEBT_RECEIPT">
+                      Recebimento de fiado
+                    </SelectItem>
+                    <SelectItem value="CANCELLATION_CREDIT">
+                      Crédito por cancelamento
+                    </SelectItem>
+                  </>
                 )}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
-      {activeTab === "SALES" && (
-        <section className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-          <div className="border-b p-4">
-            <p className="font-semibold">
-              {filteredHistoryEvents.length} movimentação(ões) encontrada(s)
-            </p>
-          </div>
+              </SelectContent>
+            </Select>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
-              <thead className="bg-gray-50 text-gray-500">
-                <tr>
-                  <th className="p-4">Data</th>
-                  <th className="p-4">Responsável / Cliente</th>
-                  <th className="p-4">Pagamento</th>
-                  <th className="p-4">Total</th>
-                  <th className="p-4">Situação</th>
-                  <th className="p-4">Ações</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {filteredHistoryEvents.map((event) => (
-                  <tr
-                    key={`${event.type}-${event.id}`}
-                    className="border-t"
-                  >
-                    <td className="p-4">
-                      {new Date(event.createdAt).toLocaleString("pt-BR")}
-                    </td>
-
-                    <td className="p-4">
-                      {event.type === "SALE" ? (
-                        <>
-                          <p>{event.sale.employee}</p>
-                          {event.sale.customer && (
-                            <p className="text-xs text-gray-500">
-                              Cliente: {event.sale.customer.name}
-                            </p>
-                          )}
-                        </>
-                      ) : (
-                        <>
-                          <p>{event.debtPayment.customer.name}</p>
-                          <p className="text-xs text-gray-500">
-                            Recebido por: {event.debtPayment.employee}
-                          </p>
-                        </>
-                      )}
-                    </td>
-
-                    <td className="p-4">
-                      {event.type === "SALE" ? (
-                        getPaymentLabel(
-                          getSaleDisplayPayments(event.sale),
-                          event.sale.accountAmount,
-                        )
-                      ) : (
-                        <div>
-                          <span
-                            className={`font-medium ${
-                              event.debtPayment.kind === "CANCELLATION_CREDIT"
-                                ? "text-amber-700"
-                                : "text-blue-700"
-                            }`}
-                          >
-                            {event.debtPayment.kind === "CANCELLATION_CREDIT"
-                              ? "Crédito por cancelamento"
-                              : "Recebimento de fiado"}
-                          </span>
-                          <p className="text-xs text-gray-500">
-                            {event.debtPayment.kind === "CANCELLATION_CREDIT"
-                              ? event.debtPayment.description ??
-                                "Crédito gerado no cancelamento de entrega"
-                              : event.debtPayment.payments
-                                  .map(
-                                    (item) =>
-                                      paymentLabels[item.paymentMethod] ??
-                                      item.paymentMethod,
-                                  )
-                                  .join(", ")}
-                          </p>
-                        </div>
-                      )}
-                    </td>
-
-                    <td className="p-4 font-semibold">
-                      {currency.format(
-                        event.type === "SALE"
-                          ? event.sale.total
-                          : event.debtPayment.amount,
-                      )}
-                    </td>
-
-                    <td className="p-4">
-                      {event.type === "SALE" ? (
-                        <span
-                          className={
-                            event.sale.status === "COMPLETED"
-                              ? "rounded-full bg-emerald-50 px-2 py-1 text-emerald-700"
-                              : event.sale.status === "CANCELLED"
-                                ? "rounded-full bg-red-50 px-2 py-1 text-red-700"
-                                : "rounded-full bg-amber-50 px-2 py-1 text-amber-700"
-                          }
-                        >
-                          {event.sale.status === "COMPLETED"
-                            ? "Concluída"
-                            : event.sale.status === "CANCELLED"
-                              ? "Cancelada"
-                              : "Aguardando entrega"}
-                        </span>
-                      ) : (
-                        <span
-                          className={`rounded-full px-2 py-1 ${
-                            event.debtPayment.kind === "CANCELLATION_CREDIT"
-                              ? "bg-amber-50 text-amber-700"
-                              : "bg-blue-50 text-blue-700"
-                          }`}
-                        >
-                          {event.debtPayment.kind === "CANCELLATION_CREDIT"
-                            ? "Crédito"
-                            : "Recebido"}
-                        </span>
-                      )}
-                    </td>
-
-                    <td className="p-4">
-                      {event.type === "SALE" ? (
-                        <button
-                          onClick={() => setSelectedSale(event.sale)}
-                          className="font-medium text-blue-600 hover:underline"
-                        >
-                          Detalhes
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => setSelectedDebtPayment(event.debtPayment)}
-                          className="font-medium text-blue-600 hover:underline"
-                        >
-                          Detalhes
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-
-                {filteredHistoryEvents.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="p-8 text-center text-gray-500">
-                      Nenhuma movimentação encontrada.
-                    </td>
-                  </tr>
+            <Select
+              value={payment}
+              onValueChange={(value) =>
+                resetPageAnd(() => setPayment(value ?? "ALL"))
+              }
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Pagamento" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">Todas as formas</SelectItem>
+                <SelectItem value="CASH">Dinheiro</SelectItem>
+                <SelectItem value="PIX">Pix</SelectItem>
+                <SelectItem value="CREDIT_CARD">Crédito</SelectItem>
+                <SelectItem value="DEBIT_CARD">Débito</SelectItem>
+                {tab === "SALES" && (
+                  <SelectItem value="FIADO">Fiado</SelectItem>
                 )}
+              </SelectContent>
+            </Select>
+          </>
+        )}
+      </section>
 
-              </tbody>
-            </table>
-          </div>
-        </section>
+      {isFetching && (
+        <p className="text-xs text-muted-foreground">Atualizando lista...</p>
       )}
+
+      <section className="overflow-hidden rounded-xl border bg-card">
+        {tab === "SALES" && (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>
+                  <SortableHeader
+                    label="Data"
+                    column="createdAt"
+                    sortBy={sortBy}
+                    sortDir={sortDir}
+                    onSort={toggleSort}
+                  />
+                </TableHead>
+                <TableHead>
+                  <SortableHeader
+                    label="Funcionário"
+                    column="employee"
+                    sortBy={sortBy}
+                    sortDir={sortDir}
+                    onSort={toggleSort}
+                  />
+                </TableHead>
+                <TableHead>Pagamento</TableHead>
+                <TableHead>
+                  <SortableHeader
+                    label="Total"
+                    column="total"
+                    sortBy={sortBy}
+                    sortDir={sortDir}
+                    onSort={toggleSort}
+                  />
+                </TableHead>
+                <TableHead>
+                  <SortableHeader
+                    label="Status"
+                    column="status"
+                    sortBy={sortBy}
+                    sortDir={sortDir}
+                    onSort={toggleSort}
+                  />
+                </TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {(salesQuery.data?.items ?? []).map((sale) => (
+                <TableRow key={sale.id}>
+                  <TableCell>
+                    {new Date(sale.createdAt).toLocaleString("pt-BR")}
+                  </TableCell>
+                  <TableCell>
+                    <div>
+                      <p>{sale.employee}</p>
+                      {sale.customer && (
+                        <p className="text-xs text-muted-foreground">
+                          {sale.customer.name}
+                        </p>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell>{paymentLabel(sale)}</TableCell>
+                  <TableCell className="font-semibold">
+                    {currency.format(sale.total)}
+                  </TableCell>
+                  <TableCell>
+                    <Badge
+                      variant={
+                        sale.status === "COMPLETED"
+                          ? "default"
+                          : sale.status === "CANCELLED"
+                            ? "destructive"
+                            : "secondary"
+                      }
+                    >
+                      {sale.status === "COMPLETED"
+                        ? "Concluída"
+                        : sale.status === "CANCELLED"
+                          ? "Cancelada"
+                          : "Aguardando entrega"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Button
+                      type="button"
+                      variant="link"
+                      onClick={() => setSelectedSale(sale)}
+                    >
+                      Detalhes
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+
+        {tab === "CREDITS" && (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>
+                  <SortableHeader
+                    label="Data"
+                    column="createdAt"
+                    sortBy={sortBy}
+                    sortDir={sortDir}
+                    onSort={toggleSort}
+                  />
+                </TableHead>
+                <TableHead>
+                  <SortableHeader
+                    label="Funcionário"
+                    column="employee"
+                    sortBy={sortBy}
+                    sortDir={sortDir}
+                    onSort={toggleSort}
+                  />
+                </TableHead>
+                <TableHead>Tipo</TableHead>
+                <TableHead>
+                  <SortableHeader
+                    label="Valor"
+                    column="amount"
+                    sortBy={sortBy}
+                    sortDir={sortDir}
+                    onSort={toggleSort}
+                  />
+                </TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {(creditsQuery.data?.items ?? []).map((credit) => (
+                <TableRow key={credit.id}>
+                  <TableCell>
+                    {new Date(credit.createdAt).toLocaleString("pt-BR")}
+                  </TableCell>
+                  <TableCell>
+                    <div>
+                      <p>{credit.customer.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        por {credit.employee}
+                      </p>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    {credit.kind === "CANCELLATION_CREDIT"
+                      ? "Crédito por cancelamento"
+                      : "Recebimento de fiado"}
+                  </TableCell>
+                  <TableCell className="font-semibold">
+                    {currency.format(credit.amount)}
+                  </TableCell>
+                  <TableCell>
+                    <Button
+                      type="button"
+                      variant="link"
+                      onClick={() => setSelectedCredit(credit)}
+                    >
+                      Detalhes
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+
+        {tab === "CASH_REGISTERS" && (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>
+                  <SortableHeader
+                    label="Abertura"
+                    column="openedAt"
+                    sortBy={sortBy}
+                    sortDir={sortDir}
+                    onSort={toggleSort}
+                  />
+                </TableHead>
+                <TableHead>Aberto por</TableHead>
+                <TableHead>
+                  <SortableHeader
+                    label="Abertura R$"
+                    column="openingAmount"
+                    sortBy={sortBy}
+                    sortDir={sortDir}
+                    onSort={toggleSort}
+                  />
+                </TableHead>
+                <TableHead>
+                  <SortableHeader
+                    label="Status"
+                    column="status"
+                    sortBy={sortBy}
+                    sortDir={sortDir}
+                    onSort={toggleSort}
+                  />
+                </TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {(cashRegistersQuery.data?.items ?? []).map((register) => (
+                <TableRow key={register.id}>
+                  <TableCell>
+                    {new Date(register.openedAt).toLocaleString("pt-BR")}
+                  </TableCell>
+                  <TableCell>{register.openedBy}</TableCell>
+                  <TableCell>
+                    {currency.format(register.openingAmount)}
+                  </TableCell>
+                  <TableCell>
+                    <Badge
+                      variant={
+                        register.status === "OPEN" ? "secondary" : "default"
+                      }
+                    >
+                      {register.status === "OPEN" ? "Aberto" : "Fechado"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Button
+                      type="button"
+                      variant="link"
+                      onClick={() => setSelectedCashRegisterId(register.id)}
+                    >
+                      Detalhes
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+
+        <div className="border-t px-4">
+          <ListPagination
+            page={activeResult?.page ?? page}
+            pageCount={activeResult?.pageCount ?? 1}
+            total={activeResult?.total ?? 0}
+            pageSize={activeResult?.pageSize ?? 20}
+            isLoading={isFetching}
+            onPageChange={setPage}
+          />
+        </div>
+      </section>
 
       {selectedSale && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6">
+          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-background p-6">
             <div className="flex items-start justify-between">
-              <div>
-                <h2 className="text-xl font-bold">Detalhes da venda</h2>
-                <p className="mt-1 break-all text-xs text-gray-500">
-                  {selectedSale.id}
-                </p>
-              </div>
-
-              <button
+              <h2 className="text-xl font-bold">Detalhes da venda</h2>
+              <Button
+                type="button"
+                variant="ghost"
                 onClick={() => setSelectedSale(null)}
-                className="text-2xl text-gray-500"
-                aria-label="Fechar detalhes"
               >
                 ×
-              </button>
+              </Button>
             </div>
-
-            <div className="mt-5 space-y-2 text-sm">
+            <div className="mt-4 space-y-2 text-sm">
               <p>
                 <strong>Data:</strong>{" "}
                 {new Date(selectedSale.createdAt).toLocaleString("pt-BR")}
@@ -608,473 +591,112 @@ export function HistoryClient({
                 <strong>Funcionário:</strong> {selectedSale.employee}
               </p>
               <p>
-                <strong>Cliente:</strong>{" "}
-                {selectedSale.customer ? (
-                  <>
-                    {selectedSale.customer.name}
-                    <span className="text-gray-500">
-                      {" "}— {selectedSale.customer.phone}
-                    </span>
-                  </>
-                ) : (
-                  "Não informado"
-                )}
+                <strong>Status:</strong> {selectedSale.status}
+              </p>
+              <p>
+                <strong>Pagamento:</strong> {paymentLabel(selectedSale)}
               </p>
               <div>
-                <p>
-                  <strong>Pagamento:</strong>
-                </p>
-
-                {selectedSale.payments.length > 0 ||
-                selectedSale.deliveryPayments.length > 0 ||
-                selectedSale.accountAmount > 0 ? (
-                  <div className="ml-2">
-                    {selectedSale.payments.length > 0
-                      ? selectedSale.payments.map((item, index) => (
-                          <p key={`${item.paymentMethod}-${index}`}>
-                            {paymentLabels[item.paymentMethod] ??
-                              item.paymentMethod}
-                            : {currency.format(item.amount)}
-                          </p>
-                        ))
-                      : selectedSale.deliveryPayments.map((item, index) => (
-                          <p key={`${item.paymentMethod}-${index}`}>
-                            {paymentLabels[item.paymentMethod] ??
-                              item.paymentMethod}
-                            {item.deliveryType === "PREPAID"
-                              ? " (antecipado)"
-                              : " (na entrega)"}
-                            : {currency.format(item.amount)}
-                          </p>
-                        ))}
-
-                    {selectedSale.accountAmount > 0 && (
-                      <p>
-                        Fiado: {currency.format(selectedSale.accountAmount)}
-                      </p>
-                    )}
-                  </div>
-                ) : (
-                  <p className="ml-2">Não informado</p>
-                )}
+                <strong>Itens:</strong>
+                <ul className="mt-1 list-disc pl-5">
+                  {selectedSale.items.map((item) => (
+                    <li key={item.id}>
+                      {item.productName} × {item.quantity} —{" "}
+                      {currency.format(item.total)}
+                    </li>
+                  ))}
+                </ul>
               </div>
-              {selectedSale.cashReceived > 0 && (
-                <div className="rounded-lg bg-gray-50 p-3">
-                  <p>
-                    <strong>Dinheiro recebido:</strong>{" "}
-                    {currency.format(selectedSale.cashReceived)}
-                  </p>
-
-                  <p>
-                    <strong>Troco devolvido:</strong>{" "}
-                    {currency.format(selectedSale.changeAmount)}
-                  </p>
-                </div>
-              )}
-
-              <p>
-                <strong>Situação:</strong>{" "}
-                {selectedSale.status === "COMPLETED"
-                  ? "Concluída"
-                  : selectedSale.status === "CANCELLED"
-                    ? "Cancelada"
-                    : "Aguardando entrega"}
+              <p className="text-lg font-bold">
+                Total: {currency.format(selectedSale.total)}
               </p>
             </div>
-
-            <h3 className="mt-6 font-semibold">Produtos</h3>
-
-            <div className="mt-3 divide-y">
-              {selectedSale.items.map((item) => (
-                <div
-                  key={item.id}
-                  className="flex justify-between gap-4 py-3 text-sm"
-                >
-                  <div>
-                    <p className="font-medium">{item.productName}</p>
-                    <p className="text-gray-500">
-                      {item.quantity} × {currency.format(item.unitPrice)}
-                    </p>
-                  </div>
-                  <p className="font-semibold">
-                    {currency.format(item.total)}
-                  </p>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-4 space-y-1 border-t pt-4 text-right">
-              {selectedSale.deliveryFee > 0 && (
-                <>
-                  <p className="text-sm text-gray-500">
-                    Produtos:{" "}
-                    {currency.format(
-                      selectedSale.total - selectedSale.deliveryFee,
-                    )}
-                  </p>
-                  <p className="text-sm text-gray-500">
-                    Taxa de entrega:{" "}
-                    {currency.format(selectedSale.deliveryFee)}
-                  </p>
-                </>
-              )}
-              <p className="text-sm text-gray-500">Total da venda</p>
-              <p className="text-2xl font-bold">
-                {currency.format(selectedSale.total)}
-              </p>
-            </div>
-
-            <button
-              onClick={() => setSelectedSale(null)}
-              className="mt-5 w-full rounded-lg border px-4 py-3 font-medium"
-            >
-              Fechar
-            </button>
           </div>
         </div>
       )}
 
-      {selectedDebtPayment && (
+      {selectedCredit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-lg rounded-xl bg-white p-6">
+          <div className="w-full max-w-lg rounded-xl bg-background p-6">
             <div className="flex items-start justify-between">
-              <div>
-                <h2 className="text-xl font-bold">
-                  {selectedDebtPayment.kind === "CANCELLATION_CREDIT"
-                    ? "Detalhes do crédito por cancelamento"
-                    : "Detalhes do recebimento de fiado"}
-                </h2>
-
-                <p className="mt-1 break-all text-xs text-gray-500">
-                  {selectedDebtPayment.id}
-                </p>
-              </div>
-
-              <button
-                onClick={() => setSelectedDebtPayment(null)}
-                className="text-2xl text-gray-500"
-                aria-label="Fechar detalhes"
+              <h2 className="text-xl font-bold">
+                {selectedCredit.kind === "CANCELLATION_CREDIT"
+                  ? "Crédito por cancelamento"
+                  : "Recebimento de fiado"}
+              </h2>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setSelectedCredit(null)}
               >
                 ×
-              </button>
+              </Button>
             </div>
-
-            <div className="mt-5 space-y-3 text-sm">
+            <div className="mt-4 space-y-2 text-sm">
               <p>
-                <strong>Data:</strong>{" "}
-                {new Date(selectedDebtPayment.createdAt).toLocaleString("pt-BR")}
+                <strong>Cliente:</strong> {selectedCredit.customer.name}
               </p>
-
               <p>
-                <strong>Cliente:</strong>{" "}
-                {selectedDebtPayment.customer.name}
+                <strong>Funcionário:</strong> {selectedCredit.employee}
               </p>
-
-              <p>
-                <strong>Telefone:</strong>{" "}
-                {selectedDebtPayment.customer.phone || "Não informado"}
-              </p>
-
-              <p>
-                <strong>Funcionário:</strong>{" "}
-                {selectedDebtPayment.employee}
-              </p>
-
-              {selectedDebtPayment.description && (
+              {selectedCredit.description && (
                 <p>
-                  <strong>Descrição:</strong>{" "}
-                  {selectedDebtPayment.description}
+                  <strong>Descrição:</strong> {selectedCredit.description}
                 </p>
               )}
-
-              {selectedDebtPayment.kind === "DEBT_RECEIPT" && (
-                <div>
-                  <strong>Formas de pagamento:</strong>
-
-                  <div className="ml-2 mt-1">
-                    {selectedDebtPayment.payments.length > 0 ? (
-                      selectedDebtPayment.payments.map((item, index) => (
-                        <p key={`${item.paymentMethod}-${index}`}>
-                          {paymentLabels[item.paymentMethod] ??
-                            item.paymentMethod}
-                          : {currency.format(item.amount)}
-                        </p>
-                      ))
-                    ) : (
-                      <p>Não informado</p>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {selectedDebtPayment.cashReceived > 0 && (
-                <div className="rounded-lg bg-gray-50 p-3">
-                  <p>
-                    <strong>Dinheiro recebido:</strong>{" "}
-                    {currency.format(selectedDebtPayment.cashReceived)}
-                  </p>
-
-                  <p>
-                    <strong>Troco devolvido:</strong>{" "}
-                    {currency.format(selectedDebtPayment.changeAmount)}
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <div className="mt-5 border-t pt-4 text-right">
-              <p className="text-sm text-gray-500">
-                {selectedDebtPayment.kind === "CANCELLATION_CREDIT"
-                  ? "Crédito gerado na conta do cliente"
-                  : "Total recebido e abatido da dívida"}
-              </p>
-
-              <p
-                className={`text-2xl font-bold ${
-                  selectedDebtPayment.kind === "CANCELLATION_CREDIT"
-                    ? "text-amber-700"
-                    : "text-emerald-700"
-                }`}
-              >
-                {currency.format(selectedDebtPayment.amount)}
+              <p className="text-lg font-bold">
+                {currency.format(selectedCredit.amount)}
               </p>
             </div>
-
-            <button
-              onClick={() => setSelectedDebtPayment(null)}
-              className="mt-5 w-full rounded-lg border px-4 py-3 font-medium hover:bg-gray-50"
-            >
-              Fechar
-            </button>
           </div>
         </div>
       )}
 
-      {selectedCashRegister && (
+      {selectedCashRegisterId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl bg-white p-6">
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-background p-6">
             <div className="flex items-start justify-between">
-              <div>
-                <h2 className="text-xl font-bold">Detalhes do caixa</h2>
-                <p className="mt-1 break-all text-xs text-gray-500">
-                  {selectedCashRegister.id}
-                </p>
-              </div>
-
-              <button
-                onClick={() => setSelectedCashRegister(null)}
-                className="text-2xl text-gray-500"
-                aria-label="Fechar detalhes"
+              <h2 className="text-xl font-bold">Detalhes do caixa</h2>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setSelectedCashRegisterId(null)}
               >
                 ×
-              </button>
+              </Button>
             </div>
-
-            <div className="mt-5 grid gap-4 sm:grid-cols-2">
-              <div className="rounded-lg bg-gray-50 p-4">
-                <p className="text-sm text-gray-500">Abertura</p>
-                <p className="mt-1 font-semibold">
-                  {new Date(selectedCashRegister.openedAt).toLocaleString("pt-BR")}
+            {cashRegisterDetailsQuery.isLoading && (
+              <p className="mt-4 text-sm text-muted-foreground">Carregando...</p>
+            )}
+            {cashRegisterDetailsQuery.data && (
+              <div className="mt-4 space-y-3 text-sm">
+                <p>
+                  <strong>Aberto por:</strong>{" "}
+                  {cashRegisterDetailsQuery.data.openedBy}
                 </p>
-                <p className="mt-1 text-sm text-gray-600">
-                  Responsável: {selectedCashRegister.openedBy}
+                <p>
+                  <strong>Abertura:</strong>{" "}
+                  {currency.format(
+                    cashRegisterDetailsQuery.data.openingAmount,
+                  )}
+                </p>
+                <p>
+                  <strong>Status:</strong>{" "}
+                  {cashRegisterDetailsQuery.data.status}
+                </p>
+                <p>
+                  <strong>Vendas na sessão:</strong>{" "}
+                  {cashRegisterDetailsQuery.data.sales.length}
+                </p>
+                <p>
+                  <strong>Movimentações:</strong>{" "}
+                  {cashRegisterDetailsQuery.data.movements.length}
                 </p>
               </div>
-
-              <div className="rounded-lg bg-gray-50 p-4">
-                <p className="text-sm text-gray-500">Fechamento</p>
-                <p className="mt-1 font-semibold">
-                  {selectedCashRegister.closedAt
-                    ? new Date(selectedCashRegister.closedAt).toLocaleString("pt-BR")
-                    : "Caixa ainda aberto"}
-                </p>
-                <p className="mt-1 text-sm text-gray-600">
-                  Responsável: {selectedCashRegister.closedBy ?? "—"}
-                </p>
-              </div>
-            </div>
-
-            <h3 className="mt-6 font-semibold">Resumo financeiro</h3>
-
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <div className="rounded-lg border p-4">
-                <p className="text-sm text-gray-500">Valor inicial</p>
-                <p className="text-xl font-bold">
-                  {currency.format(selectedCashRegister.openingAmount)}
-                </p>
-              </div>
-
-              <div className="rounded-lg border p-4">
-                <p className="text-sm text-gray-500">Valor esperado</p>
-                <p className="text-xl font-bold">
-                  {selectedCashRegister.expectedAmount !== null
-                    ? currency.format(selectedCashRegister.expectedAmount)
-                    : "Não informado"}
-                </p>
-              </div>
-
-              <div className="rounded-lg border p-4">
-                <p className="text-sm text-gray-500">Valor contado</p>
-                <p className="text-xl font-bold">
-                  {selectedCashRegister.countedAmount !== null
-                    ? currency.format(selectedCashRegister.countedAmount)
-                    : "Não informado"}
-                </p>
-              </div>
-
-              <div className="rounded-lg border p-4">
-                <p className="text-sm text-gray-500">Diferença</p>
-                <p
-                  className={`text-xl font-bold ${selectedCashRegister.difference === null
-                    ? "text-gray-700"
-                    : selectedCashRegister.difference < 0
-                      ? "text-red-600"
-                      : selectedCashRegister.difference > 0
-                        ? "text-emerald-600"
-                        : "text-gray-700"
-                    }`}
-                >
-                  {selectedCashRegister.difference !== null
-                    ? currency.format(selectedCashRegister.difference)
-                    : "Não informado"}
-                </p>
-              </div>
-            </div>
-
-            <h3 className="mt-6 font-semibold">
-              Resumo por forma de pagamento
-            </h3>
-
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              {Object.entries(paymentLabels).map(([method, label]) => (
-                <div
-                  key={method}
-                  className="rounded-lg border p-4"
-                >
-                  <p className="text-sm text-gray-500">{label}</p>
-                  <p className="mt-1 text-xl font-bold">
-                    {currency.format(cashRegisterPaymentSummary[method] ?? 0)}
-                  </p>
-                </div>
-              ))}
-            </div>
-
-            <h3 className="mt-6 font-semibold">Movimentações de caixa</h3>
-
-            <div className="mt-3 divide-y rounded-lg border">
-              {selectedCashRegister.movements.map((movement) => (
-                <div
-                  key={movement.id}
-                  className="flex flex-wrap justify-between gap-3 p-3 text-sm"
-                >
-                  <div>
-                    <p className="font-medium">
-                      {movement.type === "SUPPLY" ? "Suprimento" : "Sangria"}
-                    </p>
-                    <p className="text-gray-500">
-                      {movement.description || "Sem descrição"}
-                    </p>
-                    <p className="text-xs text-gray-400">
-                      {movement.employee} •{" "}
-                      {new Date(movement.createdAt).toLocaleString("pt-BR")}
-                    </p>
-                  </div>
-
-                  <p
-                    className={`font-semibold ${movement.type === "SUPPLY" ? "text-emerald-600" : "text-red-600"
-                      }`}
-                  >
-                    {movement.type === "SUPPLY" ? "+" : "-"}
-                    {currency.format(movement.amount)}
-                  </p>
-                </div>
-              ))}
-
-              {selectedCashRegister.movements.length === 0 && (
-                <p className="p-4 text-center text-sm text-gray-500">
-                  Nenhuma movimentação registrada.
-                </p>
-              )}
-            </div>
-
-            <h3 className="mt-6 font-semibold">Vendas da sessão</h3>
-
-            <div className="mt-3 divide-y rounded-lg border">
-              {selectedCashRegister.sales.map((sale) => (
-                <div
-                  key={sale.id}
-                  className="flex flex-wrap justify-between gap-3 p-3 text-sm"
-                >
-                  <div>
-                    <p className="font-medium">
-                      Venda #{sale.id.slice(-8)}
-                    </p>
-                    <p className="text-gray-500">
-                      {new Date(sale.createdAt).toLocaleString("pt-BR")}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      {getPaymentLabel(sale.payments, sale.accountAmount) === "Não informado"
-                        ? "Pagamento não informado"
-                        : [
-                          ...sale.payments.map(
-                            (item) =>
-                              `${paymentLabels[item.paymentMethod] ?? item.paymentMethod}: ${currency.format(item.amount)}`,
-                          ),
-                          ...(sale.accountAmount > 0
-                            ? [`Fiado: ${currency.format(sale.accountAmount)}`]
-                            : []),
-                        ].join(" • ")}
-                    </p>
-
-                    {sale.cashReceived > 0 && (
-                      <p className="mt-1 text-xs text-gray-500">
-                        Dinheiro recebido: {currency.format(sale.cashReceived)}
-                        {" • "}
-                        Troco: {currency.format(sale.changeAmount)}
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="text-right">
-                    <p className="font-semibold">
-                      {currency.format(sale.total)}
-                    </p>
-                    <p
-                      className={
-                        sale.status === "COMPLETED"
-                          ? "text-xs text-emerald-600"
-                          : sale.status === "CANCELLED"
-                            ? "text-xs text-red-600"
-                            : "text-xs text-amber-600"
-                      }
-                    >
-                      {sale.status === "COMPLETED"
-                        ? "Concluída"
-                        : sale.status === "CANCELLED"
-                          ? "Cancelada"
-                          : "Aguardando entrega"}
-                    </p>
-                  </div>
-                </div>
-              ))}
-
-              {selectedCashRegister.sales.length === 0 && (
-                <p className="p-4 text-center text-sm text-gray-500">
-                  Nenhuma venda vinculada a esta sessão.
-                </p>
-              )}
-            </div>
-
-            <button
-              onClick={() => setSelectedCashRegister(null)}
-              className="mt-6 w-full rounded-lg border px-4 py-3 font-medium hover:bg-gray-50"
-            >
-              Fechar
-            </button>
+            )}
           </div>
         </div>
       )}
-
-    </main>
+    </div>
   );
 }

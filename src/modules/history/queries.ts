@@ -229,3 +229,93 @@ export async function loadHistoryPageData() {
     debtPayments: formattedDebtPayments,
   };
 }
+
+export async function loadCashRegisterDetails(cashRegisterId: string) {
+  const register = await prisma.cashRegister.findUnique({
+    where: { id: cashRegisterId },
+    include: {
+      openedBy: { select: { name: true } },
+      closedBy: { select: { name: true } },
+      movements: {
+        include: {
+          user: { select: { name: true } },
+        },
+        orderBy: { createdAt: "desc" },
+      },
+      sales: {
+        include: {
+          payments: true,
+          delivery: {
+            select: {
+              payments: {
+                select: { method: true, amount: true },
+              },
+            },
+          },
+          accountMovements: {
+            where: { type: "DEBIT" },
+            select: { amount: true },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      },
+    },
+  });
+
+  if (!register) {
+    return null;
+  }
+
+  return {
+    id: register.id,
+    status: register.status,
+    openingAmount: Number(register.openingAmount),
+    expectedAmount:
+      register.expectedAmount !== null
+        ? Number(register.expectedAmount)
+        : null,
+    countedAmount:
+      register.countedAmount !== null
+        ? Number(register.countedAmount)
+        : null,
+    difference:
+      register.difference !== null ? Number(register.difference) : null,
+    openedAt: register.openedAt.toISOString(),
+    closedAt: register.closedAt?.toISOString() ?? null,
+    openedBy: register.openedBy.name,
+    closedBy: register.closedBy?.name ?? null,
+    movements: register.movements.map((movement) => ({
+      id: movement.id,
+      type: movement.type,
+      amount: Number(movement.amount),
+      description: movement.description,
+      createdAt: movement.createdAt.toISOString(),
+      employee: movement.user.name,
+    })),
+    sales: register.sales.map((sale) => {
+      const salePayments = sale.payments.map((payment) => ({
+        paymentMethod: payment.paymentMethod,
+        amount: Number(payment.amount),
+      }));
+      const deliveryPayments =
+        sale.delivery?.payments.map((payment) => ({
+          paymentMethod: payment.method,
+          amount: Number(payment.amount),
+        })) ?? [];
+
+      return {
+        id: sale.id,
+        status: sale.status,
+        total: Number(sale.total),
+        cashReceived: Number(sale.cashReceived),
+        changeAmount: Number(sale.changeAmount),
+        payments: salePayments.length > 0 ? salePayments : deliveryPayments,
+        accountAmount: sale.accountMovements.reduce(
+          (sum, movement) => sum + Number(movement.amount),
+          0,
+        ),
+        createdAt: sale.createdAt.toISOString(),
+      };
+    }),
+  };
+}

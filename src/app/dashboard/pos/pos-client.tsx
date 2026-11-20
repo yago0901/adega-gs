@@ -1,8 +1,20 @@
 "use client";
 
 import { useMemo, useState, useTransition, type FormEvent } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { finalizeSale, openCashRegister, closeCashRegister, registerCashSupply, registerCashWithdrawal } from "./actions";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { ListPagination } from "@/components/data-table/list-pagination";
+import { Input } from "@/components/ui/input";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import {
+  finalizeSale,
+  openCashRegister,
+  closeCashRegister,
+  registerCashSupply,
+  registerCashWithdrawal,
+  searchPosProductsAction,
+} from "./actions";
 import OpeningConfirmationModal from "./OpeningConfirmationModal";
 import ReceiveDebtModal from "./ReceiveDebtModal";
 import SignOutButton from "../sign-out-button";
@@ -185,24 +197,35 @@ function getTypeLabel(type: Product["type"]) {
 }
 
 export default function PosClient({
-  products,
+  products: initialProducts,
+  productsMeta: initialProductsMeta,
   customers,
   motoboys,
   cashRegister,
   canManageCashRegister,
+  showBackToDashboard,
   deliveries,
 }: {
   products: Product[];
+  productsMeta: {
+    total: number;
+    page: number;
+    pageSize: number;
+    pageCount: number;
+  };
   customers: Customer[];
   motoboys: Motoboy[];
   cashRegister: CashRegister | null;
   canManageCashRegister: boolean;
+  showBackToDashboard: boolean;
   deliveries: DeliveryOrder[];
 }) {
 
   const router = useRouter();
 
   const [search, setSearch] = useState("");
+  const [productsPage, setProductsPage] = useState(1);
+  const debouncedSearch = useDebouncedValue(search, 250);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [message, setMessage] = useState("");
   const [saleError, setSaleError] = useState("");
@@ -288,15 +311,30 @@ export default function PosClient({
     setPendingSaleDeliveryPayments,
   ] = useState<DeliveryPaymentRequest[] | null>(null);
 
-  const availableProducts = useMemo(() => {
-    const term = search.trim().toLowerCase();
+  const productsQuery = useQuery({
+    queryKey: ["pos-products", debouncedSearch, productsPage],
+    queryFn: () =>
+      searchPosProductsAction({
+        search: debouncedSearch,
+        page: productsPage,
+        pageSize: initialProductsMeta.pageSize,
+        sortBy: "name",
+        sortDir: "asc",
+      }),
+    initialData:
+      debouncedSearch === "" && productsPage === 1
+        ? {
+            items: initialProducts,
+            total: initialProductsMeta.total,
+            page: initialProductsMeta.page,
+            pageSize: initialProductsMeta.pageSize,
+            pageCount: initialProductsMeta.pageCount,
+          }
+        : undefined,
+    placeholderData: keepPreviousData,
+  });
 
-    return products.filter(
-      (product) =>
-        product.name.toLowerCase().includes(term) ||
-        product.code.toLowerCase().includes(term),
-    );
-  }, [products, search]);
+  const availableProducts = productsQuery.data?.items ?? initialProducts;
 
   const availableCustomers = useMemo(() => {
     const term = customerSearch.trim().toLowerCase();
@@ -688,6 +726,7 @@ export default function PosClient({
         setCustomerSearch("");
         setShowCustomerOptions(false);
         setSearch("");
+        setProductsPage(1);
         setAccountAmount("0.00");
         setPendingSaleAccountAmount(null);
         setPendingSaleIsDelivery(false);
@@ -1398,7 +1437,20 @@ export default function PosClient({
       )}
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">
+          {showBackToDashboard && (
+            <Link
+              href="/dashboard"
+              className="text-sm text-emerald-700 hover:underline"
+            >
+              ← Voltar ao painel
+            </Link>
+          )}
+
+          <h1
+            className={`text-2xl font-bold text-gray-900 ${
+              showBackToDashboard ? "mt-3" : ""
+            }`}
+          >
             Frente de Caixa
           </h1>
 
@@ -1736,14 +1788,23 @@ export default function PosClient({
         cashRegister ? (
           <div className="grid gap-6 lg:grid-cols-[1fr_400px]">
             <section className="space-y-4">
-              <input
+              <Input
                 type="search"
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Buscar por nome ou código..."
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setProductsPage(1);
+                }}
+                placeholder="Digite para filtrar produtos..."
                 disabled={isSaleAwaitingConfirmation}
-                className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none focus:border-blue-500"
+                className="h-11"
               />
+
+              {productsQuery.isFetching && (
+                <p className="text-xs text-muted-foreground">
+                  Atualizando produtos...
+                </p>
+              )}
 
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {availableProducts.map((product) => {
@@ -1795,6 +1856,18 @@ export default function PosClient({
                   </p>
                 )}
               </div>
+
+              <ListPagination
+                page={productsQuery.data?.page ?? productsPage}
+                pageCount={productsQuery.data?.pageCount ?? 1}
+                total={productsQuery.data?.total ?? 0}
+                pageSize={
+                  productsQuery.data?.pageSize ??
+                  initialProductsMeta.pageSize
+                }
+                isLoading={productsQuery.isFetching}
+                onPageChange={setProductsPage}
+              />
             </section>
 
             <aside className="h-fit rounded-xl border border-gray-200 bg-white p-5">

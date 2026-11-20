@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireModuleAccess, requireCashRegisterManagement } from "@/lib/permissions";
+import type { ListQueryInput } from "@/lib/list-query";
 import {
   closeCashRegisterRecord,
   openCashRegisterRecord,
@@ -14,6 +15,7 @@ import {
   dispatchDeliveryRecord,
 } from "@/modules/pos/delivery.service";
 import type { DeliveryCancellationResolution } from "@/modules/pos/types";
+import { searchPosProducts } from "@/modules/pos/product-search";
 import { cancelSaleRecord, finalizeSaleRecord } from "@/modules/pos/sale.service";
 import type {
   Opening,
@@ -24,6 +26,11 @@ import type {
 import type { DeliveryPaymentRequest } from "@/modules/pos/types";
 
 export type { SaleResult } from "@/modules/pos/types";
+
+export async function searchPosProductsAction(input: ListQueryInput = {}) {
+  await requireModuleAccess("POS");
+  return searchPosProducts(input);
+}
 
 export async function openCashRegister(openingAmount: string) {
     const session = await requireCashRegisterManagement();
