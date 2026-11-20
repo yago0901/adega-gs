@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { ListPagination } from "@/components/data-table/list-pagination";
 import { SortableHeader } from "@/components/data-table/sortable-header";
@@ -17,6 +17,7 @@ import {
 import { usePaginatedListState } from "@/hooks/use-paginated-list";
 import type { PaginatedResult } from "@/lib/list-query";
 import type { CustomerListItem } from "@/modules/customers/list";
+import { CustomerFormModal } from "./customer-form-modal";
 import { deactivateCustomer, listCustomersAction } from "./actions";
 
 const currency = new Intl.NumberFormat("pt-BR", {
@@ -29,6 +30,21 @@ type ClientsListClientProps = {
 };
 
 export function ClientsListClient({ initial }: ClientsListClientProps) {
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingCustomerId, setEditingCustomerId] = useState<string | null>(
+    null,
+  );
+
+  function openCreateModal() {
+    setEditingCustomerId(null);
+    setModalOpen(true);
+  }
+
+  function openEditModal(customerId: string) {
+    setEditingCustomerId(customerId);
+    setModalOpen(true);
+  }
+
   const {
     search,
     page,
@@ -62,7 +78,30 @@ export function ClientsListClient({ initial }: ClientsListClientProps) {
   const items = result?.items ?? [];
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <a
+            href="/dashboard"
+            className="text-sm text-emerald-700 hover:underline"
+          >
+            ← Dashboard
+          </a>
+          <h1 className="mt-3 text-2xl font-bold">Clientes</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Cadastro e consulta dos clientes da adega.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={openCreateModal}
+          className="rounded-lg bg-emerald-600 px-5 py-3 text-sm font-semibold text-white hover:bg-emerald-700"
+        >
+          + Novo cliente
+        </button>
+      </div>
+
       <Input
         value={search}
         onChange={(event) => onSearchChange(event.target.value)}
@@ -147,12 +186,13 @@ export function ClientsListClient({ initial }: ClientsListClientProps) {
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
-                        <Button variant="link" className="h-auto p-0" asChild>
-                          <Link
-                            href={`/dashboard/clients/${customer.id}/edit`}
-                          >
-                            Editar
-                          </Link>
+                        <Button
+                          type="button"
+                          variant="link"
+                          className="h-auto p-0"
+                          onClick={() => openEditModal(customer.id)}
+                        >
+                          Editar
                         </Button>
                         <form
                           action={deactivateCustomer.bind(null, customer.id)}
@@ -185,6 +225,12 @@ export function ClientsListClient({ initial }: ClientsListClientProps) {
           />
         </div>
       </section>
+
+      <CustomerFormModal
+        open={modalOpen}
+        customerId={editingCustomerId}
+        onOpenChange={setModalOpen}
+      />
     </div>
   );
 }

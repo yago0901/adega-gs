@@ -13,23 +13,25 @@ export default async function EmployeesPage() {
   const initial = await listEmployees({ page: 1, pageSize: 20 });
 
   return (
-    <div className="space-y-6">
-      <div>
-        <Link
-          href="/dashboard"
-          className="text-sm text-emerald-700 hover:underline"
-        >
-          ← Dashboard
-        </Link>
+    <main className="min-h-screen bg-slate-100 p-5 md:p-8">
+      <div className="mx-auto max-w-7xl space-y-8">
+        <div>
+          <Link
+            href="/dashboard"
+            className="text-sm text-emerald-700 hover:underline"
+          >
+            ← Dashboard
+          </Link>
 
-        <h1 className="mt-3 text-2xl font-bold">Funcionários</h1>
+          <h1 className="mt-3 text-2xl font-bold">Funcionários</h1>
 
-        <p className="mt-1 text-sm text-zinc-500">
-          Gerencie funcionários e suas permissões de acesso.
-        </p>
+          <p className="mt-1 text-sm text-slate-500">
+            Gerencie funcionários e suas permissões de acesso.
+          </p>
+        </div>
+
+        <EmployeeManagement initial={initial} />
       </div>
-
-      <EmployeeManagement initial={initial} />
-    </div>
+    </main>
   );
 }

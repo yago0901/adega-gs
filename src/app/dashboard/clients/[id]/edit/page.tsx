@@ -95,6 +95,7 @@ async function EditCustomerContent({
           </section>
 
           <CustomerAddressesFields
+            variant="embedded"
             initialAddresses={customer.addresses.map((address) => ({
               zipCode: address.zipCode,
               street: address.street,

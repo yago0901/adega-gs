@@ -210,10 +210,15 @@ export function ProductTypeFields({
 
   return (
     <>
-      <section className="border-t border-slate-100 pt-6">
-        <h2 className="mb-4 font-bold">Classificação</h2>
+      <section>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+          Classificação
+        </h2>
+        <p className="mt-1 text-sm text-slate-500">
+          Tipo do produto, embalagem, dose ou combo.
+        </p>
 
-        <label className="block text-sm font-medium">
+        <label className="mt-5 block text-sm font-medium">
           Tipo de produto
           <select
             name="type"

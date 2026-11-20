@@ -31,6 +31,7 @@ import type {
   HistorySaleItem,
 } from "@/modules/history/list";
 import type { PaginatedResult } from "@/lib/list-query";
+import { getSaleCode } from "@/lib/sale-code";
 import {
   getCashRegisterDetailsAction,
   listHistoryCashRegistersAction,
@@ -81,6 +82,7 @@ export function HistoryClient({
   const [payment, setPayment] = useState("ALL");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [singleDay, setSingleDay] = useState(false);
   const [page, setPage] = useState(1);
   const [sortBy, setSortBy] = useState("createdAt");
   const [sortDir, setSortDir] = useState<SortDirection>("desc");
@@ -237,33 +239,45 @@ export function HistoryClient({
         ))}
       </div>
 
-      <section className="grid gap-3 rounded-xl border bg-card p-4 md:grid-cols-2 lg:grid-cols-4">
-        <Input
-          value={search}
-          onChange={(event) =>
-            resetPageAnd(() => setSearch(event.target.value))
-          }
-          placeholder="Buscar..."
-        />
+      <section className="space-y-4 rounded-xl border bg-card p-5">
+        <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end">
+          <div className="min-w-0 flex-1 sm:min-w-[14rem]">
+            <Input
+              value={search}
+              onChange={(event) =>
+                resetPageAnd(() => setSearch(event.target.value))
+              }
+              placeholder={
+                tab === "SALES"
+                  ? "Buscar por código (#...), cliente ou funcionário..."
+                  : "Buscar..."
+              }
+            />
+          </div>
 
-        <DateRangeFilter
-          startDate={startDate}
-          endDate={endDate}
-          onStartDateChange={(value) =>
-            resetPageAnd(() => setStartDate(value))
-          }
-          onEndDateChange={(value) => resetPageAnd(() => setEndDate(value))}
-        />
+          <DateRangeFilter
+            startDate={startDate}
+            endDate={endDate}
+            singleDay={singleDay}
+            onSingleDayChange={(value) =>
+              resetPageAnd(() => setSingleDay(value))
+            }
+            onStartDateChange={(value) =>
+              resetPageAnd(() => setStartDate(value))
+            }
+            onEndDateChange={(value) => resetPageAnd(() => setEndDate(value))}
+          />
+        </div>
 
         {tab !== "CASH_REGISTERS" && (
-          <>
+          <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap">
             <Select
               value={status}
               onValueChange={(value) =>
                 resetPageAnd(() => setStatus(value ?? "ALL"))
               }
             >
-              <SelectTrigger>
+              <SelectTrigger className="w-full sm:w-[14rem]">
                 <SelectValue placeholder="Situação" />
               </SelectTrigger>
               <SelectContent>
@@ -297,7 +311,7 @@ export function HistoryClient({
                 resetPageAnd(() => setPayment(value ?? "ALL"))
               }
             >
-              <SelectTrigger>
+              <SelectTrigger className="w-full sm:w-[14rem]">
                 <SelectValue placeholder="Pagamento" />
               </SelectTrigger>
               <SelectContent>
@@ -311,7 +325,7 @@ export function HistoryClient({
                 )}
               </SelectContent>
             </Select>
-          </>
+          </div>
         )}
       </section>
 
@@ -324,6 +338,7 @@ export function HistoryClient({
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-[7.5rem]">Código</TableHead>
                 <TableHead>
                   <SortableHeader
                     label="Data"
@@ -367,6 +382,9 @@ export function HistoryClient({
             <TableBody>
               {(salesQuery.data?.items ?? []).map((sale) => (
                 <TableRow key={sale.id}>
+                  <TableCell className="font-mono text-sm font-semibold tracking-wide">
+                    #{getSaleCode(sale.id)}
+                  </TableCell>
                   <TableCell>
                     {new Date(sale.createdAt).toLocaleString("pt-BR")}
                   </TableCell>
@@ -572,8 +590,13 @@ export function HistoryClient({
       {selectedSale && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-background p-6">
-            <div className="flex items-start justify-between">
-              <h2 className="text-xl font-bold">Detalhes da venda</h2>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="font-mono text-lg font-bold tracking-wide text-primary">
+                  #{getSaleCode(selectedSale.id)}
+                </p>
+                <h2 className="text-xl font-bold">Detalhes da venda</h2>
+              </div>
               <Button
                 type="button"
                 variant="ghost"

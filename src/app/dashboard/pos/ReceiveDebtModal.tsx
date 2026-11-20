@@ -9,7 +9,6 @@ import {
   useTransition,
 } from "react";
 
-import { FiadoActions } from "../fiados/fiado-actions";
 import { getCustomerOpenDebts, receiveCustomerDebtPayment } from "./customer-account-actions";
 
 type Customer = {
@@ -306,9 +305,9 @@ export default function ReceiveDebtModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="receive-debt-title"
-        className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl"
+        className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl bg-white shadow-xl"
       >
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-gray-100 px-6 py-4">
           <div>
             <h2
               id="receive-debt-title"
@@ -333,7 +332,7 @@ export default function ReceiveDebtModal({
           </button>
         </div>
 
-        <div className="relative mt-5">
+        <div className="relative z-20 shrink-0 border-b border-gray-100 px-6 py-4">
           <label
             htmlFor="debtCustomerSearch"
             className="mb-2 block text-sm font-medium text-gray-700"
@@ -359,46 +358,38 @@ export default function ReceiveDebtModal({
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500"
           />
 
-          {showCustomerOptions && customerSearch.trim() && (
-            <div className="absolute z-20 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
-              {availableCustomers.length > 0 ? (
-                availableCustomers.map((customer) => (
-                  <button
-                    key={customer.id}
-                    type="button"
-                    disabled={isPending}
-                    onClick={() => handleSelectCustomer(customer)}
-                    className="block w-full border-b border-gray-100 px-3 py-3 text-left text-sm hover:bg-gray-50 disabled:opacity-50"
-                  >
-                    <h1 className="text-2xl font-bold text-slate-900">
-                      {customer.name}
-                    </h1>
+          {showCustomerOptions &&
+            customerSearch.trim() &&
+            !selectedCustomerId && (
+              <div className="absolute left-6 right-6 z-30 mt-1 max-h-56 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
+                {availableCustomers.length > 0 ? (
+                  availableCustomers.map((customer) => (
+                    <button
+                      key={customer.id}
+                      type="button"
+                      disabled={isPending}
+                      onClick={() => handleSelectCustomer(customer)}
+                      className="block w-full border-b border-gray-100 px-3 py-2.5 text-left text-sm last:border-b-0 hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      <span className="block font-medium text-gray-900">
+                        {customer.name}
+                      </span>
 
-                    <p className="mt-1 text-sm text-slate-500">
-                      {customer.phone || "Telefone não informado"}
-                    </p>
-
-                    <div className="mt-4">
-                      <FiadoActions
-                        customer={{
-                          id: customer.id,
-                          name: customer.name,
-                          phone: customer.phone ?? "",
-                        }}
-                        showDetailsLink={false}
-                      />
-                    </div>
-                  </button>
-                ))
-              ) : (
-                <p className="p-3 text-sm text-gray-500">
-                  Nenhum cliente encontrado.
-                </p>
-              )}
-            </div>
-          )}
+                      <span className="mt-0.5 block text-xs text-gray-500">
+                        {customer.phone || "Telefone não informado"}
+                      </span>
+                    </button>
+                  ))
+                ) : (
+                  <p className="p-3 text-sm text-gray-500">
+                    Nenhum cliente encontrado.
+                  </p>
+                )}
+              </div>
+            )}
         </div>
 
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
         {isPending && !debtsData && (
           <p className="mt-4 text-sm text-gray-500">
             Consultando dívidas...
@@ -598,8 +589,9 @@ export default function ReceiveDebtModal({
             {error}
           </p>
         )}
+        </div>
 
-        <div className="mt-6 flex justify-end gap-3">
+        <div className="flex shrink-0 justify-end gap-3 border-t border-gray-100 px-6 py-4">
           <button
             type="button"
             onClick={onClose}

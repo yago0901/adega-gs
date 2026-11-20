@@ -7,6 +7,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { ListPagination } from "@/components/data-table/list-pagination";
 import { Input } from "@/components/ui/input";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { fetchAddressByCep, formatCep } from "@/lib/via-cep";
 import {
   finalizeSale,
   openCashRegister,
@@ -300,6 +301,7 @@ export default function PosClient({
   const [selectedAddressId, setSelectedAddressId] = useState("");
   const [customerSearch, setCustomerSearch] = useState("");
   const [showCustomerOptions, setShowCustomerOptions] = useState(false);
+  const [showCustomerSection, setShowCustomerSection] = useState(false);
   const [isCashMovementPending, startCashMovementTransition] = useTransition();
 
   const [deliveryPayments, setDeliveryPayments] = useState<
@@ -725,6 +727,7 @@ export default function PosClient({
         setSelectedCustomerId("");
         setCustomerSearch("");
         setShowCustomerOptions(false);
+        setShowCustomerSection(false);
         setSearch("");
         setProductsPage(1);
         setAccountAmount("0.00");
@@ -1590,12 +1593,33 @@ export default function PosClient({
                   </label>
                   <input
                     value={temporaryAddressDraft.zipCode}
-                    onChange={(event) =>
+                    onChange={(event) => {
+                      const formatted = formatCep(event.target.value);
                       setTemporaryAddressDraft((current) => ({
                         ...current,
-                        zipCode: event.target.value,
-                      }))
-                    }
+                        zipCode: formatted,
+                      }));
+                    }}
+                    onBlur={async (event) => {
+                      const digits = event.currentTarget.value.replace(
+                        /\D/g,
+                        "",
+                      );
+                      if (digits.length !== 8) return;
+
+                      const address = await fetchAddressByCep(digits);
+                      if (!address) return;
+
+                      setTemporaryAddressDraft((current) => ({
+                        ...current,
+                        zipCode: address.zipCode,
+                        street: address.street || current.street,
+                        neighborhood:
+                          address.neighborhood || current.neighborhood,
+                        city: address.city || current.city,
+                        state: address.state || current.state,
+                      }));
+                    }}
                     required
                     maxLength={9}
                     placeholder="00000-000"
@@ -1870,228 +1894,260 @@ export default function PosClient({
               />
             </section>
 
-            <aside className="h-fit rounded-xl border border-gray-200 bg-white p-5">
-              <h2 className="text-lg font-bold text-gray-900">
-                Venda atual
-              </h2>
+            <aside className="h-fit space-y-4 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <h2 className="text-lg font-bold text-gray-900">Venda atual</h2>
 
-              <div className="mt-4 relative">
-                <label
-                  htmlFor="customerSearch"
-                  className="mb-2 block text-sm font-medium text-gray-700"
-                >
-                  Cliente (opcional)
-                </label>
-
-                <input
-                  id="customerSearch"
-                  type="text"
-                  value={customerSearch}
-                  placeholder="Buscar cliente por nome ou telefone..."
+              {!showCustomerSection ? (
+                <button
+                  type="button"
                   disabled={isSaleAwaitingConfirmation}
-                  onChange={(event) => {
-                    setCustomerSearch(event.target.value);
-                    setSelectedCustomerId("");
-                    setSelectedAddressId("");
-                    setIsDelivery(false);
-                    setDeliveryPayments([]);
-                    setTemporaryAddress(null);
-                    setShowCustomerOptions(true);
-                  }}
-                  onFocus={() => setShowCustomerOptions(true)}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500"
-                />
+                  onClick={() => setShowCustomerSection(true)}
+                  className="text-sm font-medium text-blue-600 hover:underline disabled:opacity-50"
+                >
+                  + Adicionar cliente
+                </button>
+              ) : (
+                <div>
+                  <div className="grid grid-cols-2 items-end gap-3">
+                    <div className="relative min-w-0">
+                      <label
+                        htmlFor="customerSearch"
+                        className="mb-2 block text-sm font-medium text-gray-700"
+                      >
+                        Cliente
+                      </label>
 
-                {showCustomerOptions && customerSearch.trim() && (
-                  <div className="absolute z-20 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
-                    {availableCustomers.length > 0 ? (
-                      availableCustomers.map((customer) => (
-                        <button
-                          key={customer.id}
-                          type="button"
-                          onClick={() => {
-                            const defaultAddress =
-                              customer.addresses.find(
-                                (address) => address.isDefault,
-                              ) ?? customer.addresses[0] ?? null;
-
-                            setSelectedCustomerId(customer.id);
-                            setSelectedAddressId(defaultAddress?.id ?? "");
-                            setCustomerSearch(`${customer.name} — ${customer.phone}`);
-                            setTemporaryAddress(null);
-                            setIsDelivery(false);
-                            setDeliveryPayments([]);
-                            setShowCustomerOptions(false);
-                          }}
-                          className="block w-full border-b border-gray-100 px-3 py-3 text-left text-sm hover:bg-gray-50"
-                        >
-                          <span className="block font-medium text-gray-900">
-                            {customer.name}
-                          </span>
-                          <span className="text-xs text-gray-500">
-                            {customer.phone}
-                          </span>
-                        </button>
-                      ))
-                    ) : (
-                      <p className="p-3 text-sm text-gray-500">
-                        Nenhum cliente encontrado.
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                {selectedCustomerId && (
-                  <button
-                    type="button"
-                    disabled={isSaleAwaitingConfirmation}
-                    onClick={() => {
-                      setSelectedCustomerId("");
-                      setSelectedAddressId("");
-                      setCustomerSearch("");
-                      setShowCustomerOptions(false);
-                      setIsDelivery(false);
-                      setDeliveryPayments([]);
-                      setTemporaryAddress(null);
-                    }}
-                    className="mt-2 text-xs text-red-600 hover:underline"
-                  >
-                    Remover cliente
-                  </button>
-                )}
-
-                {selectedCustomer && (
-                  <div className="mt-3 space-y-3 rounded-lg border border-gray-200 p-3">
-                    <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-gray-800">
                       <input
-                        type="checkbox"
-                        checked={isDelivery}
+                        id="customerSearch"
+                        type="text"
+                        value={customerSearch}
+                        placeholder="Nome ou telefone..."
                         disabled={isSaleAwaitingConfirmation}
                         onChange={(event) => {
-                          const checked = event.target.checked;
-
-                          setIsDelivery(checked);
-
-                          if (!checked) {
-                            setDeliveryPayments([]);
-                          }
+                          setCustomerSearch(event.target.value);
+                          setSelectedCustomerId("");
+                          setSelectedAddressId("");
+                          setIsDelivery(false);
+                          setDeliveryPayments([]);
+                          setTemporaryAddress(null);
+                          setShowCustomerOptions(true);
                         }}
-                        className="h-4 w-4 rounded border-gray-300 text-blue-600"
+                        onFocus={() => setShowCustomerOptions(true)}
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500"
                       />
-                      Enviar para entrega
-                    </label>
 
-                    {isDelivery && (
-                      <div className="space-y-2 border-t border-gray-100 pt-3">
-                        {!temporaryAddress &&
-                          selectedCustomer &&
-                          selectedCustomer.addresses.length > 1 && (
-                            <label className="block text-sm font-medium text-gray-700">
-                              Endereço cadastrado
-                              <select
-                                value={selectedAddressId}
-                                disabled={isSaleAwaitingConfirmation}
-                                onChange={(event) =>
-                                  setSelectedAddressId(event.target.value)
-                                }
-                                className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500"
+                      {showCustomerOptions && customerSearch.trim() && (
+                        <div className="absolute z-20 mt-1 max-h-48 w-[calc(200%+0.75rem)] overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
+                          {availableCustomers.length > 0 ? (
+                            availableCustomers.map((customer) => (
+                              <button
+                                key={customer.id}
+                                type="button"
+                                onClick={() => {
+                                  const defaultAddress =
+                                    customer.addresses.find(
+                                      (address) => address.isDefault,
+                                    ) ?? customer.addresses[0] ?? null;
+
+                                  setSelectedCustomerId(customer.id);
+                                  setSelectedAddressId(
+                                    defaultAddress?.id ?? "",
+                                  );
+                                  setCustomerSearch(
+                                    `${customer.name} — ${customer.phone}`,
+                                  );
+                                  setTemporaryAddress(null);
+                                  setIsDelivery(false);
+                                  setDeliveryPayments([]);
+                                  setShowCustomerOptions(false);
+                                }}
+                                className="block w-full border-b border-gray-100 px-3 py-3 text-left text-sm hover:bg-gray-50"
                               >
-                                {selectedCustomer.addresses.map((address) => (
-                                  <option key={address.id} value={address.id}>
-                                    {address.street}, {address.number}
-                                    {address.isDefault ? " (padrão)" : ""} — taxa{" "}
-                                    {currency.format(Number(address.deliveryFee))}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
+                                <span className="block font-medium text-gray-900">
+                                  {customer.name}
+                                </span>
+                                <span className="text-xs text-gray-500">
+                                  {customer.phone}
+                                </span>
+                              </button>
+                            ))
+                          ) : (
+                            <p className="p-3 text-sm text-gray-500">
+                              Nenhum cliente encontrado.
+                            </p>
                           )}
+                        </div>
+                      )}
+                    </div>
 
-                        {currentDeliveryAddress ? (
-                          <div>
-                            <p className="text-xs font-semibold uppercase text-gray-500">
-                              Endereço da entrega
-                            </p>
+                    <div className="flex min-h-[38px] items-center justify-start pb-0.5">
+                      {selectedCustomer ? (
+                        <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-gray-800">
+                          <input
+                            type="checkbox"
+                            checked={isDelivery}
+                            disabled={isSaleAwaitingConfirmation}
+                            onChange={(event) => {
+                              const checked = event.target.checked;
 
-                            <p className="mt-1 text-sm text-gray-800">
-                              {currentDeliveryAddress.street},{" "}
-                              {currentDeliveryAddress.number}
-                              {currentDeliveryAddress.complement &&
-                                ` — ${currentDeliveryAddress.complement}`}
-                            </p>
+                              setIsDelivery(checked);
 
-                            <p className="text-sm text-gray-600">
-                              {currentDeliveryAddress.neighborhood} —{" "}
-                              {currentDeliveryAddress.city}/
-                              {currentDeliveryAddress.state}
-                            </p>
+                              if (!checked) {
+                                setDeliveryPayments([]);
+                              }
+                            }}
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600"
+                          />
+                          Entrega
+                        </label>
+                      ) : null}
+                    </div>
+                  </div>
 
-                            <p className="text-sm text-gray-600">
-                              CEP: {currentDeliveryAddress.zipCode}
-                            </p>
+                  <div className="mt-2 flex flex-wrap gap-3">
+                    {selectedCustomerId ? (
+                      <button
+                        type="button"
+                        disabled={isSaleAwaitingConfirmation}
+                        onClick={() => {
+                          setSelectedCustomerId("");
+                          setSelectedAddressId("");
+                          setCustomerSearch("");
+                          setShowCustomerOptions(false);
+                          setShowCustomerSection(false);
+                          setIsDelivery(false);
+                          setDeliveryPayments([]);
+                          setTemporaryAddress(null);
+                        }}
+                        className="text-xs text-red-600 hover:underline"
+                      >
+                        Remover cliente
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={isSaleAwaitingConfirmation}
+                        onClick={() => {
+                          setShowCustomerSection(false);
+                          setCustomerSearch("");
+                          setShowCustomerOptions(false);
+                        }}
+                        className="text-xs text-gray-500 hover:underline"
+                      >
+                        Cancelar
+                      </button>
+                    )}
+                  </div>
 
-                            <p className="mt-1 text-sm font-medium text-gray-800">
-                              Taxa:{" "}
-                              {currency.format(
-                                Number(currentDeliveryAddress.deliveryFee),
-                              )}
-                            </p>
-
-                            {currentDeliveryAddress.reference && (
-                              <p className="mt-1 text-xs text-gray-500">
-                                Referência: {currentDeliveryAddress.reference}
-                              </p>
-                            )}
-                          </div>
-                        ) : (
-                          <p className="text-sm text-red-600">
-                            Este cliente não possui endereço cadastrado.
-                          </p>
+                  {selectedCustomer && isDelivery && (
+                    <div className="mt-3 space-y-2 rounded-lg border border-gray-200 p-3">
+                      {!temporaryAddress &&
+                        selectedCustomer.addresses.length > 1 && (
+                          <label className="block text-sm font-medium text-gray-700">
+                            Endereço cadastrado
+                            <select
+                              value={selectedAddressId}
+                              disabled={isSaleAwaitingConfirmation}
+                              onChange={(event) =>
+                                setSelectedAddressId(event.target.value)
+                              }
+                              className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-blue-500"
+                            >
+                              {selectedCustomer.addresses.map((address) => (
+                                <option key={address.id} value={address.id}>
+                                  {address.street}, {address.number}
+                                  {address.isDefault ? " (padrão)" : ""} — taxa{" "}
+                                  {currency.format(
+                                    Number(address.deliveryFee),
+                                  )}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
                         )}
 
-                        <div className="flex flex-wrap gap-3">
+                      {currentDeliveryAddress ? (
+                        <div>
+                          <p className="text-xs font-semibold uppercase text-gray-500">
+                            Endereço da entrega
+                          </p>
+
+                          <p className="mt-1 text-sm text-gray-800">
+                            {currentDeliveryAddress.street},{" "}
+                            {currentDeliveryAddress.number}
+                            {currentDeliveryAddress.complement &&
+                              ` — ${currentDeliveryAddress.complement}`}
+                          </p>
+
+                          <p className="text-sm text-gray-600">
+                            {currentDeliveryAddress.neighborhood} —{" "}
+                            {currentDeliveryAddress.city}/
+                            {currentDeliveryAddress.state}
+                          </p>
+
+                          <p className="text-sm text-gray-600">
+                            CEP: {currentDeliveryAddress.zipCode}
+                          </p>
+
+                          <p className="mt-1 text-sm font-medium text-gray-800">
+                            Taxa:{" "}
+                            {currency.format(
+                              Number(currentDeliveryAddress.deliveryFee),
+                            )}
+                          </p>
+
+                          {currentDeliveryAddress.reference && (
+                            <p className="mt-1 text-xs text-gray-500">
+                              Referência: {currentDeliveryAddress.reference}
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-red-600">
+                          Este cliente não possui endereço cadastrado.
+                        </p>
+                      )}
+
+                      <div className="flex flex-wrap gap-3">
+                        <button
+                          type="button"
+                          disabled={isSaleAwaitingConfirmation}
+                          onClick={() => {
+                            setTemporaryAddressDraft(
+                              temporaryAddress
+                                ? { ...temporaryAddress }
+                                : emptyDeliveryAddress,
+                            );
+                            setShowTemporaryAddressModal(true);
+                          }}
+                          className="text-xs font-medium text-blue-600 hover:underline disabled:opacity-50"
+                        >
+                          {temporaryAddress
+                            ? "Editar endereço temporário"
+                            : "Informar endereço temporário"}
+                        </button>
+
+                        {temporaryAddress && (
                           <button
                             type="button"
                             disabled={isSaleAwaitingConfirmation}
-                            onClick={() => {
-                              setTemporaryAddressDraft(
-                                temporaryAddress ??
-                                  (currentDeliveryAddress
-                                    ? { ...currentDeliveryAddress }
-                                    : emptyDeliveryAddress),
-                              );
-                              setShowTemporaryAddressModal(true);
-                            }}
-                            className="text-xs font-medium text-blue-600 hover:underline disabled:opacity-50"
+                            onClick={() => setTemporaryAddress(null)}
+                            className="text-xs font-medium text-gray-600 hover:underline disabled:opacity-50"
                           >
-                            {temporaryAddress
-                              ? "Editar endereço temporário"
-                              : "Informar endereço temporário"}
+                            Usar endereço cadastrado
                           </button>
-
-                          {temporaryAddress && (
-                            <button
-                              type="button"
-                              disabled={isSaleAwaitingConfirmation}
-                              onClick={() => setTemporaryAddress(null)}
-                              className="text-xs font-medium text-gray-600 hover:underline disabled:opacity-50"
-                            >
-                              Usar endereço cadastrado
-                            </button>
-                          )}
-                        </div>
-
-                        {temporaryAddress && (
-                          <p className="text-xs text-blue-700">
-                            Endereço temporário — será utilizado somente nesta
-                            venda.
-                          </p>
                         )}
                       </div>
-                    )}
-                  </div>
-                )}
-              </div>
+
+                      {temporaryAddress && (
+                        <p className="text-xs text-blue-700">
+                          Endereço temporário — usado só nesta venda.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="mt-4 space-y-4">
                 {cart.length === 0 && (
@@ -2270,171 +2326,55 @@ export default function PosClient({
 
               {hasIncompleteComposition && (
                 <p className="mt-3 text-sm text-amber-700">
-                  Configure todas as opções obrigatórias das doses antes de finalizar.
+                  Configure todas as opções obrigatórias das doses antes de
+                  finalizar.
                 </p>
               )}
 
-              {!isDelivery && (
-                <div className="space-y-3 border-t pt-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-semibold">Formas de pagamento</h3>
-
-                    <button
-                      type="button"
-                      onClick={handleAddPayment}
-                      disabled={payments.length >= 4 || isSaleAwaitingConfirmation}
-                      className="text-sm text-blue-600 disabled:opacity-50"
-                    >
-                      + Adicionar
-                    </button>
-                  </div>
-
-                  {payments.map((payment, index) => (
-                    <div key={index} className="flex items-center gap-2">
-                      <select
-                        value={payment.paymentMethod}
-                        disabled={isSaleAwaitingConfirmation}
-                        onChange={(event) =>
-                          handlePaymentChange(
-                            index,
-                            "paymentMethod",
-                            event.target.value,
-                          )
-                        }
-                        className="min-w-0 flex-1 rounded-md border p-2"
-                      >
-                        <option value="CASH">Dinheiro</option>
-                        <option value="PIX">PIX</option>
-                        <option value="CREDIT_CARD">Cartão de crédito</option>
-                        <option value="DEBIT_CARD">Cartão de débito</option>
-                      </select>
-
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        placeholder="Valor"
-                        value={payment.amount}
-                        onChange={(event) =>
-                          handlePaymentChange(index, "amount", event.target.value)
-                        }
-                        disabled={isSaleAwaitingConfirmation}
-                        className="w-28 rounded-md border p-2"
-                      />
-
-                      {payments.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => handleRemovePayment(index)}
-                          disabled={isSaleAwaitingConfirmation}
-                          className="text-red-600"
-                          aria-label="Remover pagamento"
-                        >
-                          Remover
-                        </button>
-                      )}
-                    </div>
-                  ))}
-
+              <div className="space-y-3 border-t pt-4">
+                <div className="flex items-center justify-between gap-3">
                   <div>
-                    {selectedCustomerId && (<>
-                      <label
-                        htmlFor="accountAmount"
-                        className="mb-1 block text-sm font-medium text-gray-700"
-                      >
-                        Fiado (R$)
-                      </label>
-
-                      <input
-                        id="accountAmount"
-                        type="text"
-                        inputMode="decimal"
-                        placeholder="0,00"
-                        value={accountAmount}
-                        onChange={(event) =>
-                          setAccountAmount(event.target.value.replace(/[^\d.,]/g, ""))
-                        }
-                        disabled={isSaleAwaitingConfirmation}
-                        className="w-full rounded-md border p-2 disabled:bg-gray-100"
-                      />
-                    </>
-                    )}
-
-                    {accountAmountCents !== null && accountAmountCents > 0 && !selectedCustomerId && (
-                      <p className="mt-1 text-xs text-red-600">
-                        Selecione um cliente para registrar o fiado.
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span>Total informado:</span>
-                      <span>{currency.format(paidTotal)}</span>
-                    </div>
-
-                    {selectedCustomerId && (
-                      <div className="flex justify-between">
-                        <span>Fiado:</span>
-                        <span>
-                          {currency.format((accountAmountCents ?? 0) / 100)}
-                        </span>
-                      </div>
-                    )}
-
-                    <div className="flex justify-between border-t pt-2 font-semibold">
-                      <span>Total destinado:</span>
-                      <span>
-                        {currency.format(distributedTotalCents / 100)}
-                      </span>
-                    </div>
-
-                    {remainingAmount > 0 && (
-                      <div className="flex justify-between text-amber-700">
-                        <span>Restante:</span>
-                        <span>{currency.format(remainingAmount)}</span>
-                      </div>
-                    )}
-
-                    {changeAmountCents > 0 && !hasInvalidChange && (
-                      <div className="flex justify-between rounded-lg bg-green-50 p-3 font-bold text-green-700">
-                        <span>Troco:</span>
-                        <span>{currency.format(changeAmount)}</span>
-                      </div>
-                    )}
-
-                    {hasInvalidChange && (
-                      <p className="rounded-lg bg-red-50 p-3 text-red-700">
-                        O troco de {currency.format(changeAmount)} precisa ser coberto
-                        integralmente pelo pagamento em dinheiro. PIX e cartões não
-                        podem gerar troco.
-                      </p>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {isDelivery && (
-                <div className="mt-4 space-y-4 rounded-lg border border-blue-200 bg-blue-50 p-3">
-                  <div>
-                    <h3 className="text-sm font-semibold text-blue-900">
-                      Pagamentos da entrega
+                    <h3 className="font-semibold">
+                      {isDelivery
+                        ? "Pagamentos da entrega"
+                        : "Formas de pagamento"}
                     </h3>
-
-                    <p className="mt-1 text-xs text-blue-800">
-                      Informe o que já foi pago antecipadamente e o que o motoboy
-                      deverá receber no local. Esses valores só serão lançados no
-                      caixa quando a entrega for concluída.
-                    </p>
+                    {isDelivery && (
+                      <p className="mt-0.5 text-xs text-gray-500">
+                        Antecipado ou a receber no local — entra no caixa só
+                        quando a entrega for concluída.
+                      </p>
+                    )}
                   </div>
 
-                  <div className="space-y-3">
+                  <button
+                    type="button"
+                    onClick={
+                      isDelivery
+                        ? handleAddDeliveryPayment
+                        : handleAddPayment
+                    }
+                    disabled={
+                      isSaleAwaitingConfirmation ||
+                      (isDelivery
+                        ? deliveryPayments.length >= 8
+                        : payments.length >= 4)
+                    }
+                    className="shrink-0 text-sm text-blue-600 disabled:opacity-50"
+                  >
+                    + Adicionar
+                  </button>
+                </div>
+
+                {isDelivery ? (
+                  <>
                     {deliveryPayments.map((payment, index) => (
                       <div
                         key={index}
-                        className="space-y-2 rounded-lg border border-blue-100 bg-white p-3"
+                        className="space-y-2 rounded-lg border border-gray-200 p-3"
                       >
                         <div className="flex items-center justify-between">
-                          <span className="text-sm font-semibold text-gray-800">
+                          <span className="text-sm font-medium text-gray-800">
                             Pagamento {index + 1}
                           </span>
 
@@ -2442,172 +2382,253 @@ export default function PosClient({
                             type="button"
                             onClick={() => handleRemoveDeliveryPayment(index)}
                             disabled={isSaleAwaitingConfirmation}
-                            className="text-xs font-medium text-red-600 hover:underline disabled:opacity-50"
+                            className="text-xs text-red-600 hover:underline disabled:opacity-50"
                           >
                             Remover
                           </button>
                         </div>
 
-                        <div>
-                          <label className="mb-1 block text-xs font-medium text-gray-600">
-                            Situação
-                          </label>
+                        <select
+                          value={payment.type}
+                          disabled={isSaleAwaitingConfirmation}
+                          onChange={(event) =>
+                            handleDeliveryPaymentChange(
+                              index,
+                              "type",
+                              event.target.value,
+                            )
+                          }
+                          className="w-full rounded-md border border-gray-300 bg-white p-2 text-sm"
+                        >
+                          <option value="PREPAID">Já pago antecipadamente</option>
+                          <option value="TO_COLLECT">Receber na entrega</option>
+                        </select>
 
+                        <div className="flex items-center gap-2">
                           <select
-                            value={payment.type}
+                            value={payment.method}
                             disabled={isSaleAwaitingConfirmation}
                             onChange={(event) =>
                               handleDeliveryPaymentChange(
                                 index,
-                                "type",
+                                "method",
                                 event.target.value,
                               )
                             }
-                            className="w-full rounded-md border border-gray-300 bg-white p-2 text-sm"
+                            className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white p-2 text-sm"
                           >
-                            <option value="PREPAID">Já pago antecipadamente</option>
-                            <option value="TO_COLLECT">Receber na entrega</option>
+                            <option value="CASH">Dinheiro</option>
+                            <option value="PIX">PIX</option>
+                            <option value="CREDIT_CARD">Crédito</option>
+                            <option value="DEBIT_CARD">Débito</option>
                           </select>
-                        </div>
 
-                        <div className="grid grid-cols-2 gap-2">
-                          <div>
-                            <label className="mb-1 block text-xs font-medium text-gray-600">
-                              Forma de pagamento
-                            </label>
-
-                            <select
-                              value={payment.method}
-                              disabled={isSaleAwaitingConfirmation}
-                              onChange={(event) =>
-                                handleDeliveryPaymentChange(
-                                  index,
-                                  "method",
-                                  event.target.value,
-                                )
-                              }
-                              className="w-full min-w-0 rounded-md border border-gray-300 bg-white p-2 text-sm"
-                            >
-                              <option value="CASH">Dinheiro</option>
-                              <option value="PIX">PIX</option>
-                              <option value="CREDIT_CARD">Crédito</option>
-                              <option value="DEBIT_CARD">Débito</option>
-                            </select>
-                          </div>
-
-                          <div>
-                            <label className="mb-1 block text-xs font-medium text-gray-600">
-                              Valor (R$)
-                            </label>
-
-                            <input
-                              type="text"
-                              inputMode="decimal"
-                              placeholder="0,00"
-                              value={payment.amount}
-                              disabled={isSaleAwaitingConfirmation}
-                              onChange={(event) =>
-                                handleDeliveryPaymentChange(
-                                  index,
-                                  "amount",
-                                  event.target.value,
-                                )
-                              }
-                              className="w-full min-w-0 rounded-md border border-gray-300 p-2 text-sm"
-                            />
-                          </div>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            placeholder="Valor"
+                            value={payment.amount}
+                            disabled={isSaleAwaitingConfirmation}
+                            onChange={(event) =>
+                              handleDeliveryPaymentChange(
+                                index,
+                                "amount",
+                                event.target.value,
+                              )
+                            }
+                            className="w-28 rounded-md border border-gray-300 p-2 text-sm"
+                          />
                         </div>
 
                         {payment.type === "TO_COLLECT" &&
                           (payment.method === "CREDIT_CARD" ||
                             payment.method === "DEBIT_CARD") && (
                             <p className="text-xs text-amber-700">
-                              O motoboy deverá levar a maquininha para receber este valor.
+                              Motoboy precisa levar a maquininha.
                             </p>
                           )}
                       </div>
                     ))}
-                  </div>
 
-                  <button
-                    type="button"
-                    onClick={handleAddDeliveryPayment}
-                    disabled={
-                      deliveryPayments.length >= 8 ||
-                      isSaleAwaitingConfirmation
-                    }
-                    className="w-full rounded-md border border-blue-300 bg-white px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    + Adicionar pagamento
-                  </button>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span>Total dos pagamentos</span>
+                        <span>
+                          {currency.format(deliveryTotalCents / 100)}
+                        </span>
+                      </div>
 
-                  <div className="space-y-2 border-t border-blue-200 pt-3 text-sm">
-                    <div className="flex justify-between text-gray-600">
-                      <span>Produtos</span>
-                      <span>{currency.format(itemsTotalCents / 100)}</span>
+                      {deliveryTotalCents < totalCents && (
+                        <p className="text-xs font-medium text-amber-700">
+                          Faltam{" "}
+                          {currency.format(
+                            (totalCents - deliveryTotalCents) / 100,
+                          )}{" "}
+                          para completar o total.
+                        </p>
+                      )}
+
+                      {deliveryNonCashCents > totalCents && (
+                        <p className="text-xs font-medium text-red-700">
+                          Antecipados e pagamentos sem dinheiro não podem
+                          ultrapassar o total.
+                        </p>
+                      )}
+
+                      {deliveryChangeCents > deliveryCashToCollectCents && (
+                        <p className="text-xs font-medium text-red-700">
+                          Dinheiro a receber insuficiente para o troco.
+                        </p>
+                      )}
+
+                      {deliveryChangeCents > 0 &&
+                        deliveryChangeCents <= deliveryCashToCollectCents && (
+                          <div className="flex justify-between rounded-lg bg-green-50 p-3 font-bold text-green-700">
+                            <span>Troco do motoboy</span>
+                            <span>
+                              {currency.format(deliveryChangeCents / 100)}
+                            </span>
+                          </div>
+                        )}
+
+                      {hasDuplicateDeliveryPayments && (
+                        <p className="text-xs text-red-700">
+                          Não repita a mesma forma na mesma situação.
+                        </p>
+                      )}
+
+                      {deliveryPayments.length === 0 && (
+                        <p className="text-xs text-amber-700">
+                          Adicione pelo menos uma forma de pagamento.
+                        </p>
+                      )}
                     </div>
+                  </>
+                ) : (
+                  <>
+                    {payments.map((payment, index) => (
+                      <div key={index} className="flex items-center gap-2">
+                        <select
+                          value={payment.paymentMethod}
+                          disabled={isSaleAwaitingConfirmation}
+                          onChange={(event) =>
+                            handlePaymentChange(
+                              index,
+                              "paymentMethod",
+                              event.target.value,
+                            )
+                          }
+                          className="min-w-0 flex-1 rounded-md border p-2"
+                        >
+                          <option value="CASH">Dinheiro</option>
+                          <option value="PIX">PIX</option>
+                          <option value="CREDIT_CARD">Cartão de crédito</option>
+                          <option value="DEBIT_CARD">Cartão de débito</option>
+                        </select>
 
-                    <div className="flex justify-between text-gray-600">
-                      <span>Taxa de entrega</span>
-                      <span>{currency.format(deliveryFeeAmount)}</span>
-                    </div>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="Valor"
+                          value={payment.amount}
+                          onChange={(event) =>
+                            handlePaymentChange(
+                              index,
+                              "amount",
+                              event.target.value,
+                            )
+                          }
+                          disabled={isSaleAwaitingConfirmation}
+                          className="w-28 rounded-md border p-2"
+                        />
 
-                    <div className="flex justify-between">
-                      <span className="text-gray-700">Total da venda</span>
-                      <strong>{currency.format(total)}</strong>
-                    </div>
+                        {payments.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemovePayment(index)}
+                            disabled={isSaleAwaitingConfirmation}
+                            className="text-red-600"
+                            aria-label="Remover pagamento"
+                          >
+                            Remover
+                          </button>
+                        )}
+                      </div>
+                    ))}
 
-                    <div className="flex justify-between">
-                      <span className="text-gray-700">Total dos pagamentos</span>
-                      <strong>
-                        {currency.format(deliveryTotalCents / 100)}
-                      </strong>
-                    </div>
+                    {selectedCustomerId && (
+                      <div>
+                        <label
+                          htmlFor="accountAmount"
+                          className="mb-1 block text-sm font-medium text-gray-700"
+                        >
+                          Fiado (R$)
+                        </label>
 
-
-                    {deliveryTotalCents < totalCents && (
-                      <p className="text-xs font-medium text-red-700">
-                        Faltam{" "}
-                        {currency.format((totalCents - deliveryTotalCents) / 100)}
-                        {" "}para completar o total.
-                      </p>
+                        <input
+                          id="accountAmount"
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="0,00"
+                          value={accountAmount}
+                          onChange={(event) =>
+                            setAccountAmount(
+                              event.target.value.replace(/[^\d.,]/g, ""),
+                            )
+                          }
+                          disabled={isSaleAwaitingConfirmation}
+                          className="w-full rounded-md border p-2 disabled:bg-gray-100"
+                        />
+                      </div>
                     )}
 
-                    {deliveryNonCashCents > totalCents && (
-                      <p className="text-xs font-medium text-red-700">
-                        Os pagamentos antecipados e os pagamentos sem dinheiro não podem ultrapassar o total da venda.
-                      </p>
-                    )}
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span>Total informado:</span>
+                        <span>{currency.format(paidTotal)}</span>
+                      </div>
 
-                    {deliveryChangeCents > deliveryCashToCollectCents && (
-                      <p className="text-xs font-medium text-red-700">
-                        O dinheiro a receber na entrega é insuficiente para devolver o troco.
-                      </p>
-                    )}
-
-                    {deliveryChangeCents > 0 &&
-                      deliveryChangeCents <= deliveryCashToCollectCents && (
-                        <div className="flex justify-between rounded-lg bg-green-100 p-3 font-bold text-green-800">
-                          <span>Troco que o motoboy deverá levar</span>
-                          <span>{currency.format(deliveryChangeCents / 100)}</span>
+                      {selectedCustomerId && (
+                        <div className="flex justify-between">
+                          <span>Fiado:</span>
+                          <span>
+                            {currency.format((accountAmountCents ?? 0) / 100)}
+                          </span>
                         </div>
                       )}
 
+                      <div className="flex justify-between border-t pt-2 font-semibold">
+                        <span>Total destinado:</span>
+                        <span>
+                          {currency.format(distributedTotalCents / 100)}
+                        </span>
+                      </div>
 
-                    {hasDuplicateDeliveryPayments && (
-                      <p className="text-xs text-red-700">
-                        Não repita a mesma forma de pagamento na mesma situação.
-                      </p>
-                    )}
+                      {remainingAmount > 0 && (
+                        <div className="flex justify-between text-amber-700">
+                          <span>Restante:</span>
+                          <span>{currency.format(remainingAmount)}</span>
+                        </div>
+                      )}
 
-                    {deliveryPayments.length === 0 && (
-                      <p className="text-xs text-amber-700">
-                        Adicione pelo menos uma forma de pagamento.
-                      </p>
-                    )}
-                  </div>
-                </div>
-              )}
+                      {changeAmountCents > 0 && !hasInvalidChange && (
+                        <div className="flex justify-between rounded-lg bg-green-50 p-3 font-bold text-green-700">
+                          <span>Troco:</span>
+                          <span>{currency.format(changeAmount)}</span>
+                        </div>
+                      )}
+
+                      {hasInvalidChange && (
+                        <p className="rounded-lg bg-red-50 p-3 text-red-700">
+                          O troco de {currency.format(changeAmount)} precisa ser
+                          coberto integralmente pelo pagamento em dinheiro. PIX
+                          e cartões não podem gerar troco.
+                        </p>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
 
               <button
                 type="button"

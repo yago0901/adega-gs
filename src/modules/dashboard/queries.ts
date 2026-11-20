@@ -36,6 +36,7 @@ export type LowStockProduct = {
 export type DashboardAdminMetrics = {
   activeProducts: number;
   salesToday: number;
+  customersWithDebt: number;
   lowStockProducts: LowStockProduct[];
   inventoryCost: number;
 };
@@ -47,15 +48,28 @@ export async function getDashboardAdminMetrics(): Promise<DashboardAdminMetrics>
 
   const startOfDay = new Date(`${today}T00:00:00-03:00`);
 
-  const [productsCount, salesCount, stockItems] = await Promise.all([
+  const [productsCount, salesCount, openDebtCustomers, stockItems] =
+    await Promise.all([
     prisma.product.count({
       where: { active: true },
     }),
 
-    prisma.stockMovement.count({
+    prisma.sale.count({
       where: {
-        type: "SALE",
+        status: "COMPLETED",
         createdAt: { gte: startOfDay },
+      },
+    }),
+
+    prisma.customer.count({
+      where: {
+        active: true,
+        accountMovements: {
+          some: {
+            type: "DEBIT",
+            reversedBy: null,
+          },
+        },
       },
     }),
 
@@ -117,6 +131,7 @@ export async function getDashboardAdminMetrics(): Promise<DashboardAdminMetrics>
   return {
     activeProducts: productsCount,
     salesToday: salesCount,
+    customersWithDebt: openDebtCustomers,
     lowStockProducts,
     inventoryCost,
   };

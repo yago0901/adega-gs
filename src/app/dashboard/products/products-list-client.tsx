@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { ListPagination } from "@/components/data-table/list-pagination";
 import { SortableHeader } from "@/components/data-table/sortable-header";
@@ -18,6 +18,7 @@ import {
 import { usePaginatedListState } from "@/hooks/use-paginated-list";
 import type { PaginatedResult } from "@/lib/list-query";
 import type { ProductListItem } from "@/modules/products/list";
+import { ProductFormModal } from "./product-form-modal";
 import { deactivateProduct, listProductsAction } from "./actions";
 
 const currency = new Intl.NumberFormat("pt-BR", {
@@ -30,6 +31,19 @@ type ProductsListClientProps = {
 };
 
 export function ProductsListClient({ initial }: ProductsListClientProps) {
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingProductId, setEditingProductId] = useState<string | null>(null);
+
+  function openCreateModal() {
+    setEditingProductId(null);
+    setModalOpen(true);
+  }
+
+  function openEditModal(productId: string) {
+    setEditingProductId(productId);
+    setModalOpen(true);
+  }
+
   const {
     search,
     page,
@@ -63,7 +77,30 @@ export function ProductsListClient({ initial }: ProductsListClientProps) {
   const items = result?.items ?? [];
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <a
+            href="/dashboard"
+            className="text-sm text-emerald-700 hover:underline"
+          >
+            ← Dashboard
+          </a>
+          <h1 className="mt-3 text-2xl font-bold">Produtos</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Cadastro e consulta do catálogo da adega.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={openCreateModal}
+          className="rounded-lg bg-emerald-600 px-5 py-3 text-sm font-semibold text-white hover:bg-emerald-700"
+        >
+          + Novo produto
+        </button>
+      </div>
+
       <Input
         value={search}
         onChange={(event) => onSearchChange(event.target.value)}
@@ -158,12 +195,13 @@ export function ProductsListClient({ initial }: ProductsListClientProps) {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
-                      <Button variant="link" className="h-auto p-0" asChild>
-                        <Link
-                          href={`/dashboard/products/${product.id}/edit`}
-                        >
-                          Editar
-                        </Link>
+                      <Button
+                        type="button"
+                        variant="link"
+                        className="h-auto p-0"
+                        onClick={() => openEditModal(product.id)}
+                      >
+                        Editar
                       </Button>
                       <form action={deactivateProduct.bind(null, product.id)}>
                         <Button
@@ -193,6 +231,12 @@ export function ProductsListClient({ initial }: ProductsListClientProps) {
           />
         </div>
       </section>
+
+      <ProductFormModal
+        open={modalOpen}
+        productId={editingProductId}
+        onOpenChange={setModalOpen}
+      />
     </div>
   );
 }

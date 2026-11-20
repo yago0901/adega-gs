@@ -41,6 +41,30 @@ export async function updateMotoboy(id: string, formData: FormData) {
   redirect("/dashboard/motoboys");
 }
 
+export async function saveMotoboy(formData: FormData, id?: string) {
+  await requireModuleAccess("MOTOBOYS");
+
+  try {
+    const data = parseMotoboyData(formData);
+
+    if (id) {
+      await updateMotoboyRecord(id, data);
+      revalidatePath(`/dashboard/motoboys/${id}/edit`);
+    } else {
+      await createMotoboyRecord(data);
+    }
+
+    revalidatePath("/dashboard/motoboys");
+
+    return { success: true as const };
+  } catch (error) {
+    return {
+      error:
+        error instanceof Error ? error.message : "Não foi possível salvar.",
+    };
+  }
+}
+
 export async function deactivateMotoboy(id: string) {
   await requireModuleAccess("MOTOBOYS");
 

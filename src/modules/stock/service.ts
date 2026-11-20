@@ -34,8 +34,12 @@ function getReason(formData: FormData) {
   return reason;
 }
 
-async function getProduct(productId: string) {
-  const product = await prisma.product.findFirst({
+type StockMutationProduct = NonNullable<
+  Awaited<ReturnType<typeof fetchStockMutationProduct>>
+>;
+
+async function fetchStockMutationProduct(productId: string) {
+  return prisma.product.findFirst({
     where: {
       id: productId,
       active: true,
@@ -51,8 +55,40 @@ async function getProduct(productId: string) {
           balance: true,
         },
       },
+      packagingChildProduct: true,
     },
   });
+}
+
+function resolveStockTarget(
+  formData: FormData,
+  product: StockMutationProduct,
+): "PACKAGING" | "OPEN" {
+  if (product.packagingChildProduct) {
+    return "OPEN";
+  }
+
+  if (!product.stockPackaging) {
+    return "OPEN";
+  }
+
+  if (product.stockItem!.unit !== "ML") {
+    return "PACKAGING";
+  }
+
+  const raw = getText(formData, "stockTarget");
+  return raw === "OPEN" ? "OPEN" : "PACKAGING";
+}
+
+function usesPackagingBalance(
+  product: StockMutationProduct,
+  target: "PACKAGING" | "OPEN",
+) {
+  return Boolean(product.stockPackaging) && target === "PACKAGING";
+}
+
+async function getProduct(productId: string, formData: FormData) {
+  const product = await fetchStockMutationProduct(productId);
 
   if (!product) {
     throw new Error("Produto não encontrado ou inativo.");
@@ -64,15 +100,17 @@ async function getProduct(productId: string) {
     );
   }
 
-  if (product.stockPackaging && !product.stockPackaging.balance) {
+  const target = resolveStockTarget(formData, product);
+
+  if (usesPackagingBalance(product, target) && !product.stockPackaging!.balance) {
     throw new Error("Saldo da embalagem não encontrado.");
   }
 
-  if (!product.stockPackaging && !product.stockItem.balance) {
+  if (!usesPackagingBalance(product, target) && !product.stockItem.balance) {
     throw new Error("Saldo do item de estoque não encontrado.");
   }
 
-  return product;
+  return { product, target };
 }
 
 export async function registerStockEntryRecord(
@@ -83,13 +121,14 @@ export async function registerStockEntryRecord(
   const quantity = getQuantity(formData);
   const reason = getReason(formData);
 
-  const product = await getProduct(productId);
+  const { product, target } = await getProduct(productId, formData);
 
   await prisma.$transaction(async (tx) => {
-    if (product.stockPackaging) {
+    if (usesPackagingBalance(product, target)) {
+      const packaging = product.stockPackaging!;
       const result = await tx.stockPackagingBalance.updateMany({
         where: {
-          stockPackagingId: product.stockPackaging.id,
+          stockPackagingId: packaging.id,
         },
         data: {
           quantity: {
@@ -109,7 +148,7 @@ export async function registerStockEntryRecord(
           unit: "UNIT",
           reason,
           stockItemId: product.stockItem!.id,
-          stockPackagingId: product.stockPackaging.id,
+          stockPackagingId: packaging.id,
           userId,
         },
       });
@@ -151,13 +190,14 @@ export async function registerStockLossRecord(
   const quantity = getQuantity(formData);
   const reason = getReason(formData);
 
-  const product = await getProduct(productId);
+  const { product, target } = await getProduct(productId, formData);
 
   await prisma.$transaction(async (tx) => {
-    if (product.stockPackaging) {
+    if (usesPackagingBalance(product, target)) {
+      const packaging = product.stockPackaging!;
       const result = await tx.stockPackagingBalance.updateMany({
         where: {
-          stockPackagingId: product.stockPackaging.id,
+          stockPackagingId: packaging.id,
           quantity: {
             gte: quantity,
           },
@@ -180,7 +220,7 @@ export async function registerStockLossRecord(
           unit: "UNIT",
           reason,
           stockItemId: product.stockItem!.id,
-          stockPackagingId: product.stockPackaging.id,
+          stockPackagingId: packaging.id,
           userId,
         },
       });
@@ -227,13 +267,14 @@ export async function registerStockAdjustmentRecord(
   const newQuantity = getQuantity(formData, true);
   const reason = getReason(formData);
 
-  const product = await getProduct(productId);
+  const { product, target } = await getProduct(productId, formData);
 
   await prisma.$transaction(async (tx) => {
-    if (product.stockPackaging) {
+    if (usesPackagingBalance(product, target)) {
+      const packaging = product.stockPackaging!;
       const balance = await tx.stockPackagingBalance.findUnique({
         where: {
-          stockPackagingId: product.stockPackaging.id,
+          stockPackagingId: packaging.id,
         },
       });
 
@@ -249,7 +290,7 @@ export async function registerStockAdjustmentRecord(
 
       const result = await tx.stockPackagingBalance.updateMany({
         where: {
-          stockPackagingId: product.stockPackaging.id,
+          stockPackagingId: packaging.id,
           quantity: balance.quantity,
         },
         data: {
@@ -270,7 +311,7 @@ export async function registerStockAdjustmentRecord(
           unit: "UNIT",
           reason,
           stockItemId: product.stockItem!.id,
-          stockPackagingId: product.stockPackaging.id,
+          stockPackagingId: packaging.id,
           userId,
         },
       });

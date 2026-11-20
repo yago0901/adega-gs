@@ -50,6 +50,7 @@ export function MovementsListClient({ initial }: MovementsListClientProps) {
   const [movementType, setMovementType] = useState("ALL");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [singleDay, setSingleDay] = useState(false);
 
   const {
     search,
@@ -67,6 +68,9 @@ export function MovementsListClient({ initial }: MovementsListClientProps) {
     pageSize: 20,
   });
 
+  const effectiveEndDate =
+    singleDay && startDate ? startDate : endDate;
+
   const filters = useMemo(
     () => ({
       search: debouncedSearch,
@@ -76,9 +80,17 @@ export function MovementsListClient({ initial }: MovementsListClientProps) {
       sortDir,
       movementType,
       startDate,
-      endDate,
+      endDate: effectiveEndDate,
     }),
-    [debouncedSearch, page, sortBy, sortDir, movementType, startDate, endDate],
+    [
+      debouncedSearch,
+      page,
+      sortBy,
+      sortDir,
+      movementType,
+      startDate,
+      effectiveEndDate,
+    ],
   );
 
   const query = useQuery({
@@ -112,6 +124,10 @@ export function MovementsListClient({ initial }: MovementsListClientProps) {
         <DateRangeFilter
           startDate={startDate}
           endDate={endDate}
+          singleDay={singleDay}
+          onSingleDayChange={(value) =>
+            resetPageAnd(() => setSingleDay(value))
+          }
           onStartDateChange={(value) =>
             resetPageAnd(() => setStartDate(value))
           }

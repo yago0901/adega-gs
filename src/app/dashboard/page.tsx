@@ -86,6 +86,7 @@ async function DashboardContent() {
 
   let activeProducts = 0;
   let salesToday = 0;
+  let customersWithDebt = 0;
 
   let lowStockProducts: {
     name: string;
@@ -102,6 +103,7 @@ async function DashboardContent() {
 
     activeProducts = metrics.activeProducts;
     salesToday = metrics.salesToday;
+    customersWithDebt = metrics.customersWithDebt;
     lowStockProducts = metrics.lowStockProducts;
     inventoryCost = metrics.inventoryCost;
   }
@@ -112,26 +114,30 @@ async function DashboardContent() {
     {
       label: "Produtos ativos",
       value: activeProducts.toString(),
-      description: "Produtos cadastrados e ativos",
+      description: "Catálogo disponível para venda",
       icon: "▤",
+      href: "/dashboard/products",
     },
     {
       label: "Vendas hoje",
       value: salesToday.toString(),
-      description: "Movimentações do tipo venda",
+      description: "Vendas concluídas no dia",
       icon: "▣",
+      href: "/dashboard/history",
     },
     {
       label: "Estoque baixo",
       value: lowStockProducts.length.toString(),
-      description: "Itens no mínimo ou abaixo dele",
+      description: "Itens no mínimo ou abaixo",
       icon: "⚠",
+      href: "/dashboard/stock",
     },
     {
-      label: "Valor em estoque",
-      value: formatCurrency(inventoryCost),
-      description: "Estimativa pelo custo de compra",
-      icon: "＄",
+      label: "Clientes em fiado",
+      value: customersWithDebt.toString(),
+      description: "Com saldo devedor em aberto",
+      icon: "▧",
+      href: "/dashboard/fiados",
     },
   ];
 
@@ -169,9 +175,10 @@ async function DashboardContent() {
 
               <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                 {cards.map((card) => (
-                  <div
+                  <Link
                     key={card.label}
-                    className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+                    href={card.href}
+                    className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-emerald-400 hover:shadow-md"
                   >
                     <div className="flex items-center justify-between">
                       <p className="text-sm font-medium text-slate-500">
@@ -189,9 +196,16 @@ async function DashboardContent() {
                     <p className="mt-2 text-xs text-slate-400">
                       {card.description}
                     </p>
-                  </div>
+                  </Link>
                 ))}
               </div>
+
+              <p className="mt-4 text-sm text-slate-500">
+                Valor estimado em estoque:{" "}
+                <span className="font-semibold text-slate-800">
+                  {formatCurrency(inventoryCost)}
+                </span>
+              </p>
             </section>
           )}
 

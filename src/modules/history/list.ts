@@ -160,12 +160,13 @@ export async function listHistorySales(
   }
 
   if (query.search) {
+    const searchTerm = query.search.trim().replace(/^#/, "");
     where.OR = [
-      { id: { contains: query.search, mode: "insensitive" } },
-      { user: { name: { contains: query.search, mode: "insensitive" } } },
+      { id: { contains: searchTerm, mode: "insensitive" } },
+      { user: { name: { contains: searchTerm, mode: "insensitive" } } },
       {
         customer: {
-          name: { contains: query.search, mode: "insensitive" },
+          name: { contains: searchTerm, mode: "insensitive" },
         },
       },
     ];

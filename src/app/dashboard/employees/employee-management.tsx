@@ -112,7 +112,7 @@ export function EmployeeManagement({ initial }: Props) {
   return (
     <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,1.8fr)_minmax(300px,1fr)]">
       <section className="min-w-0 space-y-4">
-        <div className="grid gap-3 rounded-xl border border-zinc-200 bg-white p-4 md:grid-cols-2">
+        <div className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-2">
           <Input
             value={search}
             onChange={(event) => onSearchChange(event.target.value)}
@@ -141,16 +141,9 @@ export function EmployeeManagement({ initial }: Props) {
           <p className="text-xs text-muted-foreground">Atualizando lista...</p>
         )}
 
-        <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white p-5">
-          <div className="mb-5 flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Funcionários cadastrados</h2>
-            <span className="text-sm text-zinc-500">
-              {result?.total ?? 0} cadastrados
-            </span>
-          </div>
-
+        <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           {employees.length === 0 ? (
-            <p className="py-8 text-center text-sm text-zinc-500">
+            <p className="p-12 text-center text-sm text-slate-500">
               {search || active !== "ALL"
                 ? "Nenhum funcionário encontrado com esses filtros."
                 : "Nenhum funcionário cadastrado."}
@@ -201,7 +194,7 @@ export function EmployeeManagement({ initial }: Props) {
                     >
                       <TableCell>
                         <p className="font-medium">{employee.name}</p>
-                        <p className="mt-1 text-xs text-zinc-500">
+                        <p className="mt-1 text-xs text-slate-500">
                           {employee.username
                             ? `@${employee.username}`
                             : "Sem usuário"}
@@ -213,7 +206,7 @@ export function EmployeeManagement({ initial }: Props) {
                           {employee.accesses.map((access) => (
                             <span
                               key={access.module}
-                              className="rounded-md bg-zinc-100 px-2 py-1 text-xs"
+                              className="rounded-md bg-slate-100 px-2 py-1 text-xs"
                             >
                               {moduleNames[access.module] ?? access.module}
                             </span>
@@ -268,7 +261,7 @@ export function EmployeeManagement({ initial }: Props) {
             <p className="mt-3 text-sm text-red-600">{feedback}</p>
           )}
 
-          <div className="border-t">
+          <div className="border-t px-4">
             <ListPagination
               page={result?.page ?? page}
               pageCount={result?.pageCount ?? 1}
@@ -278,16 +271,16 @@ export function EmployeeManagement({ initial }: Props) {
               onPageChange={setPage}
             />
           </div>
-        </div>
+        </section>
       </section>
 
-      <section className="min-w-0 rounded-xl border border-zinc-200 bg-white p-5">
+      <section className="min-w-0 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-5 flex items-start justify-between gap-2">
           <div>
             <h2 className="text-lg font-semibold">
               {selectedEmployee ? "Editar funcionário" : "Novo funcionário"}
             </h2>
-            <p className="mt-1 text-sm text-zinc-500">
+            <p className="mt-1 text-sm text-slate-500">
               {selectedEmployee
                 ? `Alterando os dados de ${selectedEmployee.name}.`
                 : "Cadastre uma conta e defina seus acessos."}

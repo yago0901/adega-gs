@@ -13,6 +13,10 @@ import {
   registerStockAdjustment,
 } from "./actions";
 import { StockListClient } from "./stock-list-client";
+import {
+  StockMutationFormFields,
+  type StockMutationProductOption,
+} from "./stock-mutation-form-fields";
 import { StockMutationForm } from "./stock-mutation-form";
 
 export const metadata = {
@@ -111,6 +115,24 @@ async function StockContent() {
       };
     });
 
+  const mutationProducts: StockMutationProductOption[] = stockItems.map(
+    (product) => ({
+      id: product.id,
+      name: product.name,
+      optionLabel: product.isCommercialPackaging
+        ? ` (${product.conversionFactor} ${product.childProductName} por embalagem)`
+        : product.hasPackaging
+          ? ` (${product.packagingName})`
+          : ` (${getUnitLabel(product.unit)})`,
+      canChooseBalanceTarget:
+        product.hasPackaging &&
+        !product.isCommercialPackaging &&
+        product.unit === "ML",
+      packagingName: product.packagingName,
+      unitLabel: getUnitLabel(product.unit),
+    }),
+  );
+
   const totalProducts = stockItems.length;
   const lowStock = stockItems.filter((product) => product.isLow);
   const totalValue = stockItems.reduce(
@@ -187,52 +209,11 @@ async function StockContent() {
               </p>
             </div>
 
-            <label className="block text-sm font-medium">
-              Produto
-              <select
-                name="productId"
-                required
-                defaultValue=""
-                className="mt-2 w-full rounded-lg border border-slate-300 bg-white p-3"
-              >
-                <option value="" disabled>
-                  Selecione
-                </option>
-                {stockItems.map((product) => (
-                  <option key={product.id} value={product.id}>
-                    {product.name}
-                    {product.isCommercialPackaging
-                      ? ` (${product.conversionFactor} ${product.childProductName} por embalagem)`
-                      : product.hasPackaging
-                        ? ` (${product.packagingName})`
-                        : ` (${getUnitLabel(product.unit)})`}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="block text-sm font-medium">
-              Quantidade
-              <input
-                name="quantity"
-                type="number"
-                min="1"
-                step="1"
-                required
-                className="mt-2 w-full rounded-lg border border-slate-300 p-3"
-              />
-            </label>
-
-            <label className="block text-sm font-medium">
-              Justificativa
-              <input
-                name="reason"
-                required
-                minLength={3}
-                placeholder="Ex.: Compra de fornecedor"
-                className="mt-2 w-full rounded-lg border border-slate-300 p-3"
-              />
-            </label>
+            <StockMutationFormFields
+              products={mutationProducts}
+              quantityLabel="Quantidade"
+              reasonPlaceholder="Ex.: Compra de fornecedor"
+            />
 
             <button
               type="submit"
@@ -253,52 +234,11 @@ async function StockContent() {
               </p>
             </div>
 
-            <label className="block text-sm font-medium">
-              Produto
-              <select
-                name="productId"
-                required
-                defaultValue=""
-                className="mt-2 w-full rounded-lg border border-slate-300 bg-white p-3"
-              >
-                <option value="" disabled>
-                  Selecione
-                </option>
-                {stockItems.map((product) => (
-                  <option key={product.id} value={product.id}>
-                    {product.name}
-                    {product.isCommercialPackaging
-                      ? ` (${product.conversionFactor} ${product.childProductName} por embalagem)`
-                      : product.hasPackaging
-                        ? ` (${product.packagingName})`
-                        : ` (${getUnitLabel(product.unit)})`}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="block text-sm font-medium">
-              Quantidade
-              <input
-                name="quantity"
-                type="number"
-                min="1"
-                step="1"
-                required
-                className="mt-2 w-full rounded-lg border border-slate-300 p-3"
-              />
-            </label>
-
-            <label className="block text-sm font-medium">
-              Justificativa
-              <input
-                name="reason"
-                required
-                minLength={3}
-                placeholder="Ex.: Produto vencido"
-                className="mt-2 w-full rounded-lg border border-slate-300 p-3"
-              />
-            </label>
+            <StockMutationFormFields
+              products={mutationProducts}
+              quantityLabel="Quantidade"
+              reasonPlaceholder="Ex.: Produto vencido"
+            />
 
             <button
               type="submit"
@@ -319,52 +259,12 @@ async function StockContent() {
               </p>
             </div>
 
-            <label className="block text-sm font-medium">
-              Produto
-              <select
-                name="productId"
-                required
-                defaultValue=""
-                className="mt-2 w-full rounded-lg border border-slate-300 bg-white p-3"
-              >
-                <option value="" disabled>
-                  Selecione
-                </option>
-                {stockItems.map((product) => (
-                  <option key={product.id} value={product.id}>
-                    {product.name}
-                    {product.isCommercialPackaging
-                      ? ` (${product.conversionFactor} ${product.childProductName} por embalagem)`
-                      : product.hasPackaging
-                        ? ` (${product.packagingName})`
-                        : ` (${getUnitLabel(product.unit)})`}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="block text-sm font-medium">
-              Quantidade física encontrada
-              <input
-                name="quantity"
-                type="number"
-                min="0"
-                step="1"
-                required
-                className="mt-2 w-full rounded-lg border border-slate-300 p-3"
-              />
-            </label>
-
-            <label className="block text-sm font-medium">
-              Justificativa
-              <input
-                name="reason"
-                required
-                minLength={3}
-                placeholder="Ex.: Conferência física"
-                className="mt-2 w-full rounded-lg border border-slate-300 p-3"
-              />
-            </label>
+            <StockMutationFormFields
+              products={mutationProducts}
+              quantityLabel="Quantidade física encontrada"
+              quantityMin={0}
+              reasonPlaceholder="Ex.: Conferência física"
+            />
 
             <button
               type="submit"

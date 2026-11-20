@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { fetchAddressByCep, formatCep } from "@/lib/via-cep";
 
 export type CustomerAddressFormValue = {
   zipCode: string;
@@ -30,10 +31,12 @@ const emptyAddress = (): CustomerAddressFormValue => ({
 
 type CustomerAddressesFieldsProps = {
   initialAddresses?: CustomerAddressFormValue[];
+  variant?: "card" | "embedded" | "flat";
 };
 
 export function CustomerAddressesFields({
   initialAddresses,
+  variant = "card",
 }: CustomerAddressesFieldsProps) {
   const [addresses, setAddresses] = useState<CustomerAddressFormValue[]>(() => {
     if (initialAddresses && initialAddresses.length > 0) {
@@ -75,6 +78,37 @@ export function CustomerAddressesFields({
     ]);
   }
 
+  function handleZipCodeInput(index: number, rawValue: string) {
+    updateAddress(index, { zipCode: formatCep(rawValue) });
+  }
+
+  async function handleZipCodeBlur(index: number, rawValue: string) {
+    const formatted = formatCep(rawValue);
+    if (formatted.replace(/\D/g, "").length !== 8) {
+      return;
+    }
+
+    const address = await fetchAddressByCep(formatted);
+    if (!address) {
+      return;
+    }
+
+    setAddresses((current) =>
+      current.map((item, i) =>
+        i === index
+          ? {
+              ...item,
+              zipCode: address.zipCode,
+              street: address.street || item.street,
+              neighborhood: address.neighborhood || item.neighborhood,
+              city: address.city || item.city,
+              state: address.state || item.state,
+            }
+          : item,
+      ),
+    );
+  }
+
   function removeAddress(index: number) {
     setAddresses((current) => {
       if (current.length <= 1) {
@@ -91,11 +125,25 @@ export function CustomerAddressesFields({
     });
   }
 
+  const sectionClassName =
+    variant === "card"
+      ? "rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
+      : variant === "flat"
+        ? ""
+        : "border-t border-slate-100 pt-6";
+
+  const addressBlockClassName =
+    variant === "flat"
+      ? "border-b border-slate-100 pb-6 last:border-b-0 last:pb-0"
+      : "rounded-xl border border-slate-200 bg-slate-50 p-4";
+
+  const headingClassName = variant === "flat" ? "text-sm font-semibold" : "font-bold";
+
   return (
-    <section className="border-t border-slate-100 pt-6">
+    <section className={sectionClassName}>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="font-bold">Endereços</h2>
+          <h2 className={headingClassName}>Endereços</h2>
           <p className="mt-1 text-sm text-slate-500">
             Cadastre pelo menos um endereço com a taxa de entrega.
           </p>
@@ -114,10 +162,7 @@ export function CustomerAddressesFields({
 
       <div className="space-y-6">
         {addresses.map((address, index) => (
-          <div
-            key={index}
-            className="rounded-xl border border-slate-200 bg-slate-50 p-4"
-          >
+          <div key={index} className={addressBlockClassName}>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <p className="text-sm font-semibold text-slate-800">
@@ -153,7 +198,10 @@ export function CustomerAddressesFields({
                 <input
                   value={address.zipCode}
                   onChange={(event) =>
-                    updateAddress(index, { zipCode: event.target.value })
+                    handleZipCodeInput(index, event.target.value)
+                  }
+                  onBlur={(event) =>
+                    void handleZipCodeBlur(index, event.target.value)
                   }
                   required
                   maxLength={9}

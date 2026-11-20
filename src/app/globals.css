@@ -105,4 +105,24 @@
   body {
     @apply bg-background text-foreground;
   }
+
+  a,
+  button,
+  [role="button"],
+  summary,
+  label[for],
+  select,
+  input[type="checkbox"],
+  input[type="radio"],
+  input[type="submit"],
+  input[type="button"] {
+    @apply cursor-pointer;
+  }
+
+  button:disabled,
+  [role="button"][aria-disabled="true"],
+  input:disabled,
+  select:disabled {
+    @apply cursor-not-allowed;
+  }
 }
