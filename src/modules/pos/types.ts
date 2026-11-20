@@ -99,6 +99,16 @@ export type DispatchDeliveryResult =
   | { success: true }
   | { success: false; error: string };
 
+export type CompleteDeliveryResult =
+  | { success: true }
+  | { success: false; error: string };
+
+export type CancelDeliveryResult =
+  | { success: true }
+  | { success: false; error: string };
+
+export type DeliveryCancellationResolution = "REFUND" | "CUSTOMER_CREDIT";
+
 export type CustomerDebtItem = {
   id: string;
   saleId: string | null;

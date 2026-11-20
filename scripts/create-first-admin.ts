@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { auth } from "../src/lib/auth";
+import { employeeAuth } from "../src/lib/employee-auth";
 import { prisma } from "../src/lib/prisma";
 
 
@@ -49,7 +49,7 @@ async function main() {
     throw new Error("E-mail inválido ou senha muito curta.");
   }
 
-  const result = await auth.api.signUpEmail({
+  const result = await employeeAuth.api.signUpEmail({
     body: {
       name: "Yago Santos",
       username: "yago",

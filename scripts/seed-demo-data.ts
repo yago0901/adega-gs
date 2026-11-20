@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { Prisma } from "../src/generated/prisma/client";
 import { prisma } from "../src/lib/prisma";
-import { auth } from "../src/lib/auth";
+import { employeeAuth } from "../src/lib/employee-auth";
 
 const DEMO_PASSWORD = "senha1234";
 
@@ -39,7 +39,7 @@ async function ensureEmployee(input: {
     return existing.id;
   }
 
-  const result = await auth.api.signUpEmail({
+  const result = await employeeAuth.api.signUpEmail({
     body: {
       name: input.name,
       email: input.email,

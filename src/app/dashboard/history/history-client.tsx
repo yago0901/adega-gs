@@ -6,9 +6,15 @@ import Link from "next/link";
 type Sale = {
   id: string;
   status: "PENDING_DELIVERY" | "COMPLETED" | "CANCELLED";
+  isDelivery: boolean;
   payments: {
     paymentMethod: string;
     amount: number;
+  }[];
+  deliveryPayments: {
+    paymentMethod: string;
+    amount: number;
+    deliveryType?: "PREPAID" | "TO_COLLECT";
   }[];
   accountAmount: number;
   total: number;
@@ -35,6 +41,8 @@ type Sale = {
 
 type DebtPayment = {
   id: string;
+  kind: "DEBT_RECEIPT" | "CANCELLATION_CREDIT";
+  description: string | null;
   amount: number;
   createdAt: string;
   employee: string;
@@ -97,6 +105,17 @@ const paymentLabels: Record<string, string> = {
   CREDIT_CARD: "Crédito",
   DEBIT_CARD: "Débito",
 };
+
+function getSaleDisplayPayments(sale: {
+  payments: { paymentMethod: string; amount: number }[];
+  deliveryPayments?: { paymentMethod: string; amount: number }[];
+}) {
+  if (sale.payments.length > 0) {
+    return sale.payments;
+  }
+
+  return sale.deliveryPayments ?? [];
+}
 
 function getPaymentLabel(
   payments: { paymentMethod: string; amount: number }[],
@@ -173,20 +192,25 @@ export function HistoryClient({
 
         const matchesStatus =
           status === "ALL" ||
-          (event.type === "SALE" && event.sale.status === status);
+          (event.type === "SALE" &&
+            (status === "DELIVERY"
+              ? event.sale.isDelivery
+              : event.sale.status === status));
 
         const matchesPayment =
           payment === "ALL" ||
           (event.type === "SALE"
             ? payment === "FIADO"
               ? event.sale.accountAmount > 0
-              : event.sale.payments.some(
-                (item) => item.paymentMethod === payment,
-              )
-            : payment !== "FIADO" &&
-            event.debtPayment.payments.some(
-              (item) => item.paymentMethod === payment,
-            ));
+              : getSaleDisplayPayments(event.sale).some(
+                  (item) => item.paymentMethod === payment,
+                )
+            : event.debtPayment.kind === "CANCELLATION_CREDIT"
+              ? payment === "ALL"
+              : payment !== "FIADO" &&
+                event.debtPayment.payments.some(
+                  (item) => item.paymentMethod === payment,
+                ));
 
         const matchesStart = !startDate || date >= startDate;
         const matchesEnd = !endDate || date <= endDate;
@@ -295,6 +319,7 @@ export function HistoryClient({
             <option value="COMPLETED">Concluídas</option>
             <option value="CANCELLED">Canceladas</option>
             <option value="PENDING_DELIVERY">Aguardando entrega</option>
+            <option value="DELIVERY">Todas as entregas</option>
           </select>
 
           <select
@@ -448,22 +473,33 @@ export function HistoryClient({
                     <td className="p-4">
                       {event.type === "SALE" ? (
                         getPaymentLabel(
-                          event.sale.payments,
+                          getSaleDisplayPayments(event.sale),
                           event.sale.accountAmount,
                         )
                       ) : (
                         <div>
-                          <span className="font-medium text-blue-700">
-                            Recebimento de fiado
+                          <span
+                            className={`font-medium ${
+                              event.debtPayment.kind === "CANCELLATION_CREDIT"
+                                ? "text-amber-700"
+                                : "text-blue-700"
+                            }`}
+                          >
+                            {event.debtPayment.kind === "CANCELLATION_CREDIT"
+                              ? "Crédito por cancelamento"
+                              : "Recebimento de fiado"}
                           </span>
                           <p className="text-xs text-gray-500">
-                            {event.debtPayment.payments
-                              .map(
-                                (item) =>
-                                  paymentLabels[item.paymentMethod] ??
-                                  item.paymentMethod,
-                              )
-                              .join(", ")}
+                            {event.debtPayment.kind === "CANCELLATION_CREDIT"
+                              ? event.debtPayment.description ??
+                                "Crédito gerado no cancelamento de entrega"
+                              : event.debtPayment.payments
+                                  .map(
+                                    (item) =>
+                                      paymentLabels[item.paymentMethod] ??
+                                      item.paymentMethod,
+                                  )
+                                  .join(", ")}
                           </p>
                         </div>
                       )}
@@ -495,8 +531,16 @@ export function HistoryClient({
                               : "Aguardando entrega"}
                         </span>
                       ) : (
-                        <span className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">
-                          Recebido
+                        <span
+                          className={`rounded-full px-2 py-1 ${
+                            event.debtPayment.kind === "CANCELLATION_CREDIT"
+                              ? "bg-amber-50 text-amber-700"
+                              : "bg-blue-50 text-blue-700"
+                          }`}
+                        >
+                          {event.debtPayment.kind === "CANCELLATION_CREDIT"
+                            ? "Crédito"
+                            : "Recebido"}
                         </span>
                       )}
                     </td>
@@ -581,14 +625,28 @@ export function HistoryClient({
                   <strong>Pagamento:</strong>
                 </p>
 
-                {selectedSale.payments.length > 0 || selectedSale.accountAmount > 0 ? (
+                {selectedSale.payments.length > 0 ||
+                selectedSale.deliveryPayments.length > 0 ||
+                selectedSale.accountAmount > 0 ? (
                   <div className="ml-2">
-                    {selectedSale.payments.map((item, index) => (
-                      <p key={`${item.paymentMethod}-${index}`}>
-                        {paymentLabels[item.paymentMethod] ?? item.paymentMethod}:{" "}
-                        {currency.format(item.amount)}
-                      </p>
-                    ))}
+                    {selectedSale.payments.length > 0
+                      ? selectedSale.payments.map((item, index) => (
+                          <p key={`${item.paymentMethod}-${index}`}>
+                            {paymentLabels[item.paymentMethod] ??
+                              item.paymentMethod}
+                            : {currency.format(item.amount)}
+                          </p>
+                        ))
+                      : selectedSale.deliveryPayments.map((item, index) => (
+                          <p key={`${item.paymentMethod}-${index}`}>
+                            {paymentLabels[item.paymentMethod] ??
+                              item.paymentMethod}
+                            {item.deliveryType === "PREPAID"
+                              ? " (antecipado)"
+                              : " (na entrega)"}
+                            : {currency.format(item.amount)}
+                          </p>
+                        ))}
 
                     {selectedSale.accountAmount > 0 && (
                       <p>
@@ -682,7 +740,9 @@ export function HistoryClient({
             <div className="flex items-start justify-between">
               <div>
                 <h2 className="text-xl font-bold">
-                  Detalhes do recebimento de fiado
+                  {selectedDebtPayment.kind === "CANCELLATION_CREDIT"
+                    ? "Detalhes do crédito por cancelamento"
+                    : "Detalhes do recebimento de fiado"}
                 </h2>
 
                 <p className="mt-1 break-all text-xs text-gray-500">
@@ -720,18 +780,32 @@ export function HistoryClient({
                 {selectedDebtPayment.employee}
               </p>
 
-              <div>
-                <strong>Formas de pagamento:</strong>
+              {selectedDebtPayment.description && (
+                <p>
+                  <strong>Descrição:</strong>{" "}
+                  {selectedDebtPayment.description}
+                </p>
+              )}
 
-                <div className="ml-2 mt-1">
-                  {selectedDebtPayment.payments.map((item, index) => (
-                    <p key={`${item.paymentMethod}-${index}`}>
-                      {paymentLabels[item.paymentMethod] ?? item.paymentMethod}:{" "}
-                      {currency.format(item.amount)}
-                    </p>
-                  ))}
+              {selectedDebtPayment.kind === "DEBT_RECEIPT" && (
+                <div>
+                  <strong>Formas de pagamento:</strong>
+
+                  <div className="ml-2 mt-1">
+                    {selectedDebtPayment.payments.length > 0 ? (
+                      selectedDebtPayment.payments.map((item, index) => (
+                        <p key={`${item.paymentMethod}-${index}`}>
+                          {paymentLabels[item.paymentMethod] ??
+                            item.paymentMethod}
+                          : {currency.format(item.amount)}
+                        </p>
+                      ))
+                    ) : (
+                      <p>Não informado</p>
+                    )}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {selectedDebtPayment.cashReceived > 0 && (
                 <div className="rounded-lg bg-gray-50 p-3">
@@ -750,10 +824,18 @@ export function HistoryClient({
 
             <div className="mt-5 border-t pt-4 text-right">
               <p className="text-sm text-gray-500">
-                Total recebido e abatido da dívida
+                {selectedDebtPayment.kind === "CANCELLATION_CREDIT"
+                  ? "Crédito gerado na conta do cliente"
+                  : "Total recebido e abatido da dívida"}
               </p>
 
-              <p className="text-2xl font-bold text-emerald-700">
+              <p
+                className={`text-2xl font-bold ${
+                  selectedDebtPayment.kind === "CANCELLATION_CREDIT"
+                    ? "text-amber-700"
+                    : "text-emerald-700"
+                }`}
+              >
                 {currency.format(selectedDebtPayment.amount)}
               </p>
             </div>

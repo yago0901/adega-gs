@@ -634,7 +634,7 @@ model Delivery {
   id     String         @id @default(cuid())
   status DeliveryStatus @default(PENDING)
 
-  // Taxa da entrega (espelha Sale.deliveryFee; editável no despacho)
+  // Taxa da entrega (espelha Sale.deliveryFee definida na venda)
   fee Decimal @default(0) @db.Decimal(12, 2)
 
   // Previsão de dinheiro entregue pelo cliente e troco

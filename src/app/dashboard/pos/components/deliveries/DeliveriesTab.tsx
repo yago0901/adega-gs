@@ -1,10 +1,17 @@
-
 "use client";
 
 import { useState } from "react";
 import { DeliveryDetailsModal } from "./DeliveryDetailsModal";
+import {
+  CancelDeliveryModal,
+  type CancellationResolution,
+} from "./CancelDeliveryModal";
 import { useRouter } from "next/navigation";
-import { dispatchDelivery } from "@/app/dashboard/pos/actions";
+import {
+  cancelDelivery,
+  completeDelivery,
+  dispatchDelivery,
+} from "@/app/dashboard/pos/actions";
 
 export type DeliveryOrder = {
   id: string;
@@ -29,7 +36,9 @@ export type DeliveryOrder = {
     id: string;
     total: string;
     deliveryFee: string;
+    customerId: string | null;
     customer: {
+      id?: string;
       name: string;
       phone: string;
     } | null;
@@ -69,18 +78,18 @@ const currency = new Intl.NumberFormat("pt-BR", {
   currency: "BRL",
 });
 
-function parseMoney(value: string) {
-  return Number(value.replace(",", "."));
-}
-
 export function DeliveriesTab({
   deliveries,
   motoboys,
 }: DeliveriesTabProps) {
   const [selectedDelivery, setSelectedDelivery] =
     useState<DeliveryOrder | null>(null);
+  const [cancellingDelivery, setCancellingDelivery] =
+    useState<DeliveryOrder | null>(null);
   const router = useRouter();
   const [dispatchingId, setDispatchingId] = useState<string | null>(null);
+  const [completingId, setCompletingId] = useState<string | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   const [selectedMotoboys, setSelectedMotoboys] = useState<
     Record<string, string>
@@ -93,22 +102,10 @@ export function DeliveriesTab({
     ),
   );
 
-  const [deliveryFees, setDeliveryFees] = useState<
-    Record<string, string>
-  >(() =>
-    Object.fromEntries(
-      deliveries.map((delivery) => [
-        delivery.id,
-        delivery.fee || delivery.sale.deliveryFee || "0",
-      ]),
-    ),
-  );
-
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   async function handleDispatch(delivery: DeliveryOrder) {
     const motoboyId = selectedMotoboys[delivery.id];
-    const fee = deliveryFees[delivery.id];
 
     if (!motoboyId) {
       setErrors((prev) => ({
@@ -118,23 +115,11 @@ export function DeliveriesTab({
       return;
     }
 
-    if (fee === undefined || fee.trim() === "") {
-      setErrors((prev) => ({
-        ...prev,
-        [delivery.id]: "Informe a taxa de entrega.",
-      }));
-      return;
-    }
-
     setDispatchingId(delivery.id);
     setErrors((prev) => ({ ...prev, [delivery.id]: "" }));
 
     try {
-      const result = await dispatchDelivery(
-        delivery.id,
-        motoboyId,
-        fee,
-      );
+      const result = await dispatchDelivery(delivery.id, motoboyId);
 
       if (!result.success) {
         setErrors((prev) => ({
@@ -153,7 +138,68 @@ export function DeliveriesTab({
     } finally {
       setDispatchingId(null);
     }
+  }
 
+  async function handleComplete(delivery: DeliveryOrder) {
+    setCompletingId(delivery.id);
+    setErrors((prev) => ({ ...prev, [delivery.id]: "" }));
+
+    try {
+      const result = await completeDelivery(delivery.id);
+
+      if (!result.success) {
+        setErrors((prev) => ({
+          ...prev,
+          [delivery.id]: result.error,
+        }));
+        return;
+      }
+
+      router.refresh();
+    } catch {
+      setErrors((prev) => ({
+        ...prev,
+        [delivery.id]: "Erro de comunicação ao concluir. Atualize a página.",
+      }));
+    } finally {
+      setCompletingId(null);
+    }
+  }
+
+  function getPrepaidAmount(delivery: DeliveryOrder) {
+    return delivery.payments.reduce((sum, payment) => {
+      if (payment.type !== "PREPAID") return sum;
+      return sum + Number(payment.amount);
+    }, 0);
+  }
+
+  async function handleConfirmCancel(input: {
+    resolution: CancellationResolution;
+    reason: string;
+    applyCreditToDebts: boolean;
+  }) {
+    if (!cancellingDelivery) return;
+
+    setIsCancelling(true);
+    setErrors((prev) => ({ ...prev, [cancellingDelivery.id]: "" }));
+
+    try {
+      const result = await cancelDelivery(
+        cancellingDelivery.id,
+        input.resolution,
+        input.reason,
+        input.applyCreditToDebts,
+      );
+
+      if (!result.success) {
+        throw new Error(result.error);
+      }
+
+      setCancellingDelivery(null);
+      router.refresh();
+    } finally {
+      setIsCancelling(false);
+    }
   }
 
   return (
@@ -164,8 +210,8 @@ export function DeliveriesTab({
             Pedidos de entrega
           </h2>
           <p className="text-sm text-gray-500">
-            A taxa já vem do endereço da venda e pode ser ajustada antes de
-            despachar o motoboy.
+            Selecione o motoboy e despache o pedido. A taxa já foi definida na
+            venda.
           </p>
         </div>
 
@@ -186,14 +232,13 @@ export function DeliveriesTab({
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-          <table className="w-full min-w-[1000px] text-left text-sm">
+          <table className="w-full min-w-[900px] text-left text-sm">
             <thead className="bg-gray-50 text-xs uppercase text-gray-500">
               <tr>
                 <th className="px-4 py-3">Pedido</th>
                 <th className="px-4 py-3">Cliente</th>
                 <th className="px-4 py-3">Total</th>
                 <th className="px-4 py-3">Motoboy</th>
-                <th className="px-4 py-3">Taxa de entrega</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Ações</th>
               </tr>
@@ -204,7 +249,6 @@ export function DeliveriesTab({
                 const isPending = delivery.status === "PENDING";
                 const selectedMotoboy =
                   selectedMotoboys[delivery.id] ?? "";
-                const feeValue = deliveryFees[delivery.id] ?? "";
 
                 return (
                   <tr key={delivery.id} className="align-top">
@@ -280,36 +324,6 @@ export function DeliveriesTab({
                       )}
                     </td>
 
-                    <td className="px-4 py-4">
-                      {isPending ? (
-                        <div className="flex items-center gap-1">
-                          <span className="text-gray-500">R$</span>
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={feeValue}
-                            onChange={(event) => {
-                              setDeliveryFees((current) => ({
-                                ...current,
-                                [delivery.id]: event.target.value,
-                              }));
-                              setErrors((current) => ({
-                                ...current,
-                                [delivery.id]: "",
-                              }));
-                            }}
-                            placeholder="0,00"
-                            className="w-24 rounded-lg border border-gray-300 px-2 py-2 text-sm text-gray-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                          />
-                        </div>
-                      ) : (
-                        <p className="font-medium text-gray-800">
-                          {currency.format(Number(delivery.fee))}
-                        </p>
-                      )}
-                    </td>
-
                     <td className="whitespace-nowrap px-4 py-4">
                       {isPending ? (
                         <span className="rounded-full bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700">
@@ -340,14 +354,15 @@ export function DeliveriesTab({
                               disabled={dispatchingId === delivery.id}
                               className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                             >
-                              {dispatchingId === delivery.id ? "Despachando..." : "Despachar"}
+                              {dispatchingId === delivery.id
+                                ? "Despachando..."
+                                : "Despachar"}
                             </button>
 
                             <button
                               type="button"
-                              disabled
-                              title="Cancelamento será implementado na próxima etapa"
-                              className="cursor-not-allowed text-xs font-medium text-red-400 opacity-60"
+                              onClick={() => setCancellingDelivery(delivery)}
+                              className="text-xs font-medium text-red-600 hover:text-red-800"
                             >
                               Cancelar
                             </button>
@@ -356,18 +371,19 @@ export function DeliveriesTab({
                           <>
                             <button
                               type="button"
-                              disabled
-                              title="Conclusão será implementada na próxima etapa"
-                              className="cursor-not-allowed rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white opacity-50"
+                              onClick={() => handleComplete(delivery)}
+                              disabled={completingId === delivery.id}
+                              className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                             >
-                              Concluir
+                              {completingId === delivery.id
+                                ? "Concluindo..."
+                                : "Concluir"}
                             </button>
 
                             <button
                               type="button"
-                              disabled
-                              title="Cancelamento será implementado na próxima etapa"
-                              className="cursor-not-allowed text-xs font-medium text-red-400 opacity-60"
+                              onClick={() => setCancellingDelivery(delivery)}
+                              className="text-xs font-medium text-red-600 hover:text-red-800"
                             >
                               Cancelar
                             </button>
@@ -376,12 +392,7 @@ export function DeliveriesTab({
                       </div>
 
                       {errors[delivery.id] && (
-                        <p
-                          className={`mt-2 max-w-[190px] text-xs ${errors[delivery.id].startsWith("Campos válidos")
-                            ? "text-amber-700"
-                            : "text-red-600"
-                            }`}
-                        >
+                        <p className="mt-2 max-w-[190px] text-xs text-red-600">
                           {errors[delivery.id]}
                         </p>
                       )}
@@ -398,6 +409,26 @@ export function DeliveriesTab({
         <DeliveryDetailsModal
           delivery={selectedDelivery}
           onClose={() => setSelectedDelivery(null)}
+        />
+      )}
+
+      {cancellingDelivery && (
+        <CancelDeliveryModal
+          saleCode={cancellingDelivery.sale.id.slice(-6).toUpperCase()}
+          prepaidAmount={getPrepaidAmount(cancellingDelivery)}
+          customerId={
+            cancellingDelivery.sale.customerId ??
+            cancellingDelivery.sale.customer?.id ??
+            null
+          }
+          customerName={cancellingDelivery.sale.customer?.name ?? null}
+          isPending={isCancelling}
+          onConfirm={handleConfirmCancel}
+          onClose={() => {
+            if (!isCancelling) {
+              setCancellingDelivery(null);
+            }
+          }}
         />
       )}
     </section>

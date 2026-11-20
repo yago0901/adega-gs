@@ -9,6 +9,70 @@ import type {
   SalePaymentRequest,
 } from "./types";
 
+export async function allocateCreditToOpenDebtsInTransaction(
+    tx: Prisma.TransactionClient,
+    customerId: string,
+    creditMovementId: string,
+    creditAmount: Prisma.Decimal,
+) {
+    const debts = await tx.customerAccountMovement.findMany({
+        where: {
+            customerId,
+            type: "DEBIT",
+        },
+        include: {
+            allocationsAsDebit: {
+                select: {
+                    amount: true,
+                },
+            },
+        },
+        orderBy: [
+            { createdAt: "asc" },
+            { id: "asc" },
+        ],
+    });
+
+    let remainingToAllocate = creditAmount;
+
+    for (const debt of debts) {
+        if (remainingToAllocate.lte(0)) {
+            break;
+        }
+
+        const paidAmount = debt.allocationsAsDebit.reduce(
+            (sum, allocation) => sum.plus(allocation.amount),
+            new Prisma.Decimal(0),
+        );
+        const remainingAmount = debt.amount.minus(paidAmount);
+
+        if (remainingAmount.lte(0)) {
+            continue;
+        }
+
+        const allocationAmount = Prisma.Decimal.min(
+            remainingToAllocate,
+            remainingAmount,
+        );
+
+        if (allocationAmount.lte(0)) {
+            continue;
+        }
+
+        await tx.customerAccountAllocation.create({
+            data: {
+                creditMovementId,
+                debitMovementId: debt.id,
+                amount: allocationAmount,
+            },
+        });
+
+        remainingToAllocate = remainingToAllocate.minus(allocationAmount);
+    }
+
+    return creditAmount.minus(remainingToAllocate);
+}
+
 export async function getCustomerOpenDebtsRecord(
     customerId: string,
 ): Promise<CustomerOpenDebtsResult> {

@@ -82,13 +82,15 @@ export async function loadFiadoCustomerDetails(customerId: string) {
       phone: true,
       accountMovements: {
         where: {
-          type: "DEBIT",
           reversedBy: null,
         },
         select: {
           id: true,
+          type: true,
           amount: true,
+          description: true,
           createdAt: true,
+          deliveryCreditForId: true,
           sale: {
             select: {
               id: true,
@@ -97,6 +99,11 @@ export async function loadFiadoCustomerDetails(customerId: string) {
             },
           },
           allocationsAsDebit: {
+            select: {
+              amount: true,
+            },
+          },
+          allocationsAsCredit: {
             select: {
               amount: true,
             },
@@ -113,25 +120,51 @@ export async function loadFiadoCustomerDetails(customerId: string) {
     return null;
   }
 
-  const debts = customer.accountMovements.map((movement) => {
-    const originalAmount = Number(movement.amount);
+  const debts = customer.accountMovements
+    .filter((movement) => movement.type === "DEBIT")
+    .map((movement) => {
+      const originalAmount = Number(movement.amount);
 
-    const paidAmount = movement.allocationsAsDebit.reduce(
-      (sum, allocation) => sum + Number(allocation.amount),
-      0,
-    );
+      const paidAmount = movement.allocationsAsDebit.reduce(
+        (sum, allocation) => sum + Number(allocation.amount),
+        0,
+      );
 
-    const remainingAmount = Math.max(0, originalAmount - paidAmount);
+      const remainingAmount = Math.max(0, originalAmount - paidAmount);
 
-    return {
-      id: movement.id,
-      originalAmount,
-      paidAmount,
-      remainingAmount,
-      createdAt: movement.createdAt,
-      sale: movement.sale,
-    };
-  });
+      return {
+        id: movement.id,
+        originalAmount,
+        paidAmount,
+        remainingAmount,
+        createdAt: movement.createdAt,
+        sale: movement.sale,
+      };
+    });
+
+  const credits = customer.accountMovements
+    .filter((movement) => movement.type === "CREDIT")
+    .map((movement) => {
+      const originalAmount = Number(movement.amount);
+      const allocatedAmount = movement.allocationsAsCredit.reduce(
+        (sum, allocation) => sum + Number(allocation.amount),
+        0,
+      );
+      const availableAmount = Math.max(0, originalAmount - allocatedAmount);
+
+      return {
+        id: movement.id,
+        originalAmount,
+        allocatedAmount,
+        availableAmount,
+        description: movement.description,
+        createdAt: movement.createdAt,
+        kind: movement.deliveryCreditForId
+          ? ("CANCELLATION_CREDIT" as const)
+          : ("PAYMENT_CREDIT" as const),
+        sale: movement.sale,
+      };
+    });
 
   const totalOriginalDebt = debts.reduce(
     (sum, debt) => sum + debt.originalAmount,
@@ -145,6 +178,11 @@ export async function loadFiadoCustomerDetails(customerId: string) {
     0,
   );
 
+  const totalAvailableCredit = credits.reduce(
+    (sum, credit) => sum + credit.availableAmount,
+    0,
+  );
+
   return {
     customer: {
       id: customer.id,
@@ -152,8 +190,10 @@ export async function loadFiadoCustomerDetails(customerId: string) {
       phone: customer.phone,
     },
     debts,
+    credits,
     totalOriginalDebt,
     totalPaid,
     totalRemaining,
+    totalAvailableCredit,
   };
 }

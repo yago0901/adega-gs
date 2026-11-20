@@ -10,7 +10,11 @@ export const auth = betterAuth({
   }),
   emailAndPassword: {
     enabled: true,
-    disableSignUp: false,
+    disableSignUp: true,
+  },
+  session: {
+    expiresIn: 60 * 60 * 12,
+    updateAge: 60 * 60,
   },
   plugins: [
     username({

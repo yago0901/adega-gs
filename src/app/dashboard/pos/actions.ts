@@ -8,7 +8,12 @@ import {
   registerCashSupplyRecord,
   registerCashWithdrawalRecord,
 } from "@/modules/pos/cash-register.service";
-import { dispatchDeliveryRecord } from "@/modules/pos/delivery.service";
+import {
+  cancelDeliveryRecord,
+  completeDeliveryRecord,
+  dispatchDeliveryRecord,
+} from "@/modules/pos/delivery.service";
+import type { DeliveryCancellationResolution } from "@/modules/pos/types";
 import { cancelSaleRecord, finalizeSaleRecord } from "@/modules/pos/sale.service";
 import type {
   Opening,
@@ -125,18 +130,50 @@ export async function registerCashWithdrawal(amountInput: string, description?: 
 export async function dispatchDelivery(
   deliveryId: string,
   motoboyId: string,
-  feeInput: string,
 ) {
   const session = await requireModuleAccess("POS");
   const result = await dispatchDeliveryRecord(
     session.user.id,
     deliveryId,
     motoboyId,
-    feeInput,
   );
   if (result.success) {
     revalidatePath("/dashboard/pos");
     revalidatePath("/dashboard/history");
+  }
+  return result;
+}
+
+export async function completeDelivery(deliveryId: string) {
+  const session = await requireModuleAccess("POS");
+  const result = await completeDeliveryRecord(session.user.id, deliveryId);
+  if (result.success) {
+    revalidatePath("/dashboard/pos");
+    revalidatePath("/dashboard/history");
+  }
+  return result;
+}
+
+export async function cancelDelivery(
+  deliveryId: string,
+  resolution: DeliveryCancellationResolution,
+  reason: string,
+  applyCreditToDebts = false,
+) {
+  const session = await requireModuleAccess("POS");
+  const result = await cancelDeliveryRecord(
+    session.user.id,
+    deliveryId,
+    resolution,
+    reason,
+    applyCreditToDebts,
+  );
+  if (result.success) {
+    revalidatePath("/dashboard/pos");
+    revalidatePath("/dashboard/history");
+    revalidatePath("/dashboard/stock");
+    revalidatePath("/dashboard/stock/movements");
+    revalidatePath("/dashboard/fiados");
   }
   return result;
 }

@@ -261,8 +261,10 @@ export async function loadPosPageData(userId: string) {
               id: true,
               total: true,
               deliveryFee: true,
+              customerId: true,
               customer: {
                 select: {
+                  id: true,
                   name: true,
                   phone: true,
                 },
@@ -347,6 +349,7 @@ export async function loadPosPageData(userId: string) {
       id: delivery.sale.id,
       total: delivery.sale.total.toString(),
       deliveryFee: delivery.sale.deliveryFee.toFixed(2),
+      customerId: delivery.sale.customerId,
       customer: delivery.sale.customer,
       deliveryZipCode: delivery.sale.deliveryZipCode,
       deliveryStreet: delivery.sale.deliveryStreet,

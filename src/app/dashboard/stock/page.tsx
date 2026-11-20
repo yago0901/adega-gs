@@ -268,17 +268,32 @@ async function StockContent() {
                       <td className="px-5 py-4">
                         <div className="flex flex-wrap gap-3">
                           {product.isCommercialPackaging && (
-                            <form action={openCommercialPackaging}>
+                            <form
+                              action={openCommercialPackaging}
+                              className="flex flex-wrap items-center gap-2"
+                            >
                               <input
                                 type="hidden"
                                 name="productId"
                                 value={product.id}
                               />
+
+                              <input
+                                type="number"
+                                name="quantity"
+                                min="1"
+                                step="1"
+                                defaultValue="1"
+                                required
+                                aria-label={`Quantidade de embalagens para abrir de ${product.name}`}
+                                className="w-16 rounded border border-slate-300 p-1.5"
+                              />
+
                               <button
                                 type="submit"
                                 className="font-semibold text-blue-700 hover:underline"
                               >
-                                Abrir embalagem
+                                Abrir embalagem(ns)
                               </button>
                             </form>
                           )}
@@ -315,27 +330,6 @@ async function StockContent() {
                                 </button>
                               </form>
                             )}
-
-                          <Link
-                            href={`/dashboard/stock?entry=${product.id}#movimentar`}
-                            className="font-medium text-emerald-700 hover:underline"
-                          >
-                            Entrada
-                          </Link>
-
-                          <Link
-                            href={`/dashboard/stock?loss=${product.id}#movimentar`}
-                            className="font-medium text-red-600 hover:underline"
-                          >
-                            Perda
-                          </Link>
-
-                          <Link
-                            href={`/dashboard/stock?adjust=${product.id}#movimentar`}
-                            className="font-medium text-slate-600 hover:underline"
-                          >
-                            Ajustar
-                          </Link>
                         </div>
                       </td>
                     </tr>

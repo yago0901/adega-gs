@@ -7,6 +7,7 @@ import { requireModuleAccess } from "@/lib/permissions";
 import { loadFiadoCustomerDetails } from "@/modules/fiados/queries";
 
 import { FiadoActions } from "../fiado-actions";
+import { FiadoCreditsPanel } from "../fiado-credits-panel";
 
 export const metadata = {
   title: "Detalhes do Fiado | Adega GS",
@@ -58,9 +59,11 @@ async function FiadoDetailsContent({ params }: PageProps) {
   const {
     customer,
     debts,
+    credits,
     totalOriginalDebt,
     totalPaid,
     totalRemaining,
+    totalAvailableCredit,
   } = details;
   return (
     <main className="min-h-screen bg-slate-100 p-5 md:p-8">
@@ -72,17 +75,21 @@ async function FiadoDetailsContent({ params }: PageProps) {
           ← Voltar para Fiados
         </Link>
 
-        <div className="mt-4">
-          <h1 className="text-2xl font-bold text-slate-900">
-            {customer.name}
-          </h1>
+        <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">
+              {customer.name}
+            </h1>
 
-          <p className="mt-1 text-sm text-slate-500">
-            {customer.phone || "Telefone não informado"}
-          </p>
+            <p className="mt-1 text-sm text-slate-500">
+              {customer.phone || "Telefone não informado"}
+            </p>
+          </div>
+
+          <FiadoActions customer={customer} showDetailsLink={false} />
         </div>
 
-        <section className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <section className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <p className="text-sm font-medium text-slate-500">
               Dívida original
@@ -109,7 +116,23 @@ async function FiadoDetailsContent({ params }: PageProps) {
               {formatCurrency(totalRemaining)}
             </p>
           </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-sm font-medium text-slate-500">
+              Crédito disponível
+            </p>
+            <p className="mt-3 text-2xl font-bold text-amber-700">
+              {formatCurrency(totalAvailableCredit)}
+            </p>
+          </div>
         </section>
+
+        <FiadoCreditsPanel
+          customerId={customer.id}
+          credits={credits}
+          totalAvailableCredit={totalAvailableCredit}
+          totalRemainingDebt={totalRemaining}
+        />
 
         <section className="mt-8 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="border-b border-slate-200 p-5">

@@ -326,16 +326,28 @@ export async function openCommercialPackagingRecord(
   userId: string,
 ) {
   const productId = getText(formData, "productId");
+  const rawQuantity = getText(formData, "quantity");
+  const quantityNumber = Number(rawQuantity);
 
   if (!productId) {
     throw new Error("Produto não informado.");
   }
 
+  if (
+    !Number.isSafeInteger(quantityNumber) ||
+    quantityNumber <= 0 ||
+    quantityNumber > 10000
+  ) {
+    throw new Error("Informe uma quantidade válida de embalagens.");
+  }
+
+  const quantity = new Prisma.Decimal(quantityNumber);
+
   await prisma.$transaction(async (tx) => {
     await openCommercialPackagingInTransaction(
       tx,
       productId,
-      new Prisma.Decimal(1),
+      quantity,
       userId,
     );
   });
