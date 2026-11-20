@@ -2,6 +2,12 @@ import "server-only";
 
 import type { PaymentMethod } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
+import {
+  calcFeeAmount,
+  calcNetAmount,
+  getPaymentFeeMap,
+  type PaymentFeeMap,
+} from "./fees";
 
 const PAYMENT_METHODS: PaymentMethod[] = [
   "CASH",
@@ -44,6 +50,9 @@ export type FinancePaymentBreakdownRow = {
   salesAmount: number;
   fiadoReceiptAmount: number;
   total: number;
+  feePercent: number;
+  feeAmount: number;
+  netTotal: number;
 };
 
 export type FinanceCashRegisterRow = {
@@ -66,6 +75,9 @@ export type FinanceOverview = {
   fiadoReceiptsCount: number;
   cashMovements: FinanceCashMovementSummary;
   paymentBreakdown: FinancePaymentBreakdownRow[];
+  paymentFees: PaymentFeeMap;
+  feesTotal: number;
+  netReceivedTotal: number;
   recentCashRegisters: FinanceCashRegisterRow[];
 };
 
@@ -82,6 +94,7 @@ export async function getFinanceOverview(): Promise<FinanceOverview> {
     salePaymentsToday,
     fiadoPaymentsToday,
     dayCashMovements,
+    paymentFees,
   ] = await Promise.all([
     prisma.sale.aggregate({
       where: {
@@ -157,6 +170,8 @@ export async function getFinanceOverview(): Promise<FinanceOverview> {
       where: { createdAt: { gte: startOfDay } },
       _sum: { amount: true },
     }),
+
+    getPaymentFeeMap(),
   ]);
 
   let cashMovements: FinanceCashMovementSummary;
@@ -192,13 +207,32 @@ export async function getFinanceOverview(): Promise<FinanceOverview> {
       fiadoPaymentsToday.find((row) => row.method === method)?._sum.amount ?? 0,
     );
 
+    const total = salesAmount + fiadoReceiptAmount;
+    const feePercent = paymentFees[method] ?? 0;
+    const feeAmount = calcFeeAmount(total, feePercent);
+    const netTotal = calcNetAmount(total, feePercent);
+
     return {
       method,
       salesAmount,
       fiadoReceiptAmount,
-      total: salesAmount + fiadoReceiptAmount,
+      total,
+      feePercent,
+      feeAmount,
+      netTotal,
     };
   });
+
+  const feesTotal = paymentBreakdown.reduce(
+    (sum, row) => sum + row.feeAmount,
+    0,
+  );
+  const grossReceivedTotal = paymentBreakdown.reduce(
+    (sum, row) => sum + row.total,
+    0,
+  );
+  const netReceivedTotal =
+    Math.round((grossReceivedTotal - feesTotal) * 100) / 100;
 
   return {
     completedSalesTotal: Number(salesAgg._sum.total ?? 0),
@@ -207,6 +241,9 @@ export async function getFinanceOverview(): Promise<FinanceOverview> {
     fiadoReceiptsCount: fiadoCount,
     cashMovements,
     paymentBreakdown,
+    paymentFees,
+    feesTotal: Math.round(feesTotal * 100) / 100,
+    netReceivedTotal,
     recentCashRegisters: recentRegisters.map((register) => ({
       id: register.id,
       status: register.status,

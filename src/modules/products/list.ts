@@ -13,6 +13,7 @@ export type ProductListItem = {
   id: string;
   name: string;
   code: string;
+  imageUrl: string | null;
   type: string;
   salePrice: number;
   categoryName: string;
@@ -80,6 +81,7 @@ export async function listProducts(
         id: product.id,
         name: product.name,
         code: product.code,
+        imageUrl: product.imageUrl,
         type: product.type,
         salePrice: Number(product.salePrice),
         categoryName: product.category.name,

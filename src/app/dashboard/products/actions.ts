@@ -182,6 +182,7 @@ export async function getProductEditDataAction(id: string) {
       barcode: product.barcode ?? "",
       name: product.name,
       description: product.description ?? "",
+      imageUrl: product.imageUrl ?? "",
       categoryId: product.categoryId,
       type: product.type,
       salePrice: product.salePrice.toString(),

@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "prisma generate && next build",
+    "build": "prisma generate && prisma migrate deploy && next build",
+    "postinstall": "prisma generate",
     "start": "next start",
     "lint": "eslint",
     "admin:bootstrap": "tsx scripts/create-first-admin.ts",
@@ -16,6 +17,7 @@
     "@prisma/client": "^7.10.1",
     "@tanstack/react-query": "^5.108.1",
     "@tanstack/react-query-devtools": "^5.108.1",
+    "@vercel/blob": "^2.9.0",
     "better-auth": "^1.7.14",
     "date-fns": "^4.4.0",
     "next": "16.4.6",

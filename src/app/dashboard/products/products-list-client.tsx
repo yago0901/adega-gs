@@ -170,10 +170,26 @@ export function ProductsListClient({ initial }: ProductsListClientProps) {
               {items.map((product) => (
                 <TableRow key={product.id}>
                   <TableCell>
-                    <p className="font-semibold">{product.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {product.type}
-                    </p>
+                    <div className="flex items-center gap-3">
+                      {product.imageUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={product.imageUrl}
+                          alt=""
+                          className="h-10 w-10 rounded-md object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-10 w-10 items-center justify-center rounded-md bg-muted text-[10px] font-semibold text-muted-foreground">
+                          {product.name.slice(0, 2).toUpperCase()}
+                        </div>
+                      )}
+                      <div>
+                        <p className="font-semibold">{product.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {product.type}
+                        </p>
+                      </div>
+                    </div>
                   </TableCell>
                   <TableCell>{product.code}</TableCell>
                   <TableCell>{product.categoryName}</TableCell>

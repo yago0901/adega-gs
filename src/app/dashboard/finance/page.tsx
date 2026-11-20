@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/table";
 import { requireModuleAccess } from "@/lib/permissions";
 import { getFinanceOverview } from "@/modules/finance/queries";
+import { PaymentFeesModal } from "./payment-fees-modal";
 
 export const metadata = {
   title: "Financeiro | Adega GS",
@@ -66,22 +67,26 @@ async function FinanceContent() {
   return (
     <main className="min-h-screen bg-slate-100 p-5 md:p-8">
       <div className="mx-auto max-w-7xl space-y-8">
-        <div>
-          <Link
-            href="/dashboard"
-            className="text-sm text-emerald-700 hover:underline"
-          >
-            ← Dashboard
-          </Link>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <Link
+              href="/dashboard"
+              className="text-sm text-emerald-700 hover:underline"
+            >
+              ← Dashboard
+            </Link>
 
-          <h1 className="mt-3 text-2xl font-bold">Financeiro</h1>
+            <h1 className="mt-3 text-2xl font-bold">Financeiro</h1>
 
-          <p className="mt-1 text-sm text-slate-500">
-            Resumo do dia e visão rápida do caixa.
-          </p>
+            <p className="mt-1 text-sm text-slate-500">
+              Resumo do dia, taxas da maquininha e líquido estimado.
+            </p>
+          </div>
+
+          <PaymentFeesModal initialFees={data.paymentFees} />
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <p className="text-sm text-slate-500">Vendas concluídas hoje</p>
             <p className="mt-2 text-2xl font-bold text-emerald-600">
@@ -90,6 +95,26 @@ async function FinanceContent() {
             <p className="mt-1 text-xs text-slate-500">
               {data.completedSalesCount}{" "}
               {data.completedSalesCount === 1 ? "venda" : "vendas"}
+            </p>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-500">Taxas estimadas hoje</p>
+            <p className="mt-2 text-2xl font-bold text-amber-700">
+              {currency.format(data.feesTotal)}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Com base nas % da maquininha
+            </p>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <p className="text-sm text-slate-500">Líquido após taxas</p>
+            <p className="mt-2 text-2xl font-bold text-emerald-700">
+              {currency.format(data.netReceivedTotal)}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Vendas + fiados recebidos − taxas
             </p>
           </div>
 
@@ -127,7 +152,7 @@ async function FinanceContent() {
           <div className="border-b border-slate-100 px-5 py-4">
             <h2 className="font-semibold">Recebimentos de hoje por forma</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Vendas concluídas e recebimentos de fiado no dia.
+              Bruto, taxa estimada e líquido por forma de pagamento.
             </p>
           </div>
 
@@ -137,7 +162,10 @@ async function FinanceContent() {
                 <TableHead>Forma</TableHead>
                 <TableHead className="text-right">Vendas</TableHead>
                 <TableHead className="text-right">Fiado</TableHead>
-                <TableHead className="text-right">Total</TableHead>
+                <TableHead className="text-right">Bruto</TableHead>
+                <TableHead className="text-right">Taxa %</TableHead>
+                <TableHead className="text-right">Taxa R$</TableHead>
+                <TableHead className="text-right">Líquido</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -152,8 +180,17 @@ async function FinanceContent() {
                   <TableCell className="text-right">
                     {currency.format(row.fiadoReceiptAmount)}
                   </TableCell>
-                  <TableCell className="text-right font-semibold">
+                  <TableCell className="text-right font-medium">
                     {currency.format(row.total)}
+                  </TableCell>
+                  <TableCell className="text-right text-slate-600">
+                    {String(row.feePercent).replace(".", ",")}%
+                  </TableCell>
+                  <TableCell className="text-right text-amber-700">
+                    {currency.format(row.feeAmount)}
+                  </TableCell>
+                  <TableCell className="text-right font-semibold text-emerald-700">
+                    {currency.format(row.netTotal)}
                   </TableCell>
                 </TableRow>
               ))}

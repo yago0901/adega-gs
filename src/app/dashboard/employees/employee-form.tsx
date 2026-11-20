@@ -1,20 +1,19 @@
-
 "use client";
 
-import { useState, useTransition, type FormEvent } from "react";
+import { useMemo, useState, useTransition, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createEmployee, updateEmployee } from "./actions";
 
 const modules = [
-  { value: "POS", label: "Frente de caixa", description: "Registrar vendas e operar o caixa", icon: "▣" },
-  { value: "STOCK", label: "Estoque", description: "Consultar e movimentar estoque", icon: "▦" },
-  { value: "PRODUCTS", label: "Produtos", description: "Cadastrar e gerenciar produtos", icon: "▤" },
-  { value: "HISTORY", label: "Histórico", description: "Consultar movimentações e vendas", icon: "◷" },
-  { value: "CUSTOMERS", label: "Clientes", description: "Cadastrar e consultar clientes", icon: "♙" },
-  { value: "FIADOS", label: "Fiados", description: "Consultar dívidas e registrar pagamentos", icon: "💰" },
-  { value: "EMPLOYEES", label: "Funcionários", description: "Acessar o módulo de funcionários", icon: "♙" },
-  { value: "FINANCE", label: "Financeiro", description: "Acessar informações financeiras", icon: "＄" },
-];
+  { value: "POS", label: "Frente de caixa" },
+  { value: "STOCK", label: "Estoque" },
+  { value: "PRODUCTS", label: "Produtos" },
+  { value: "HISTORY", label: "Histórico" },
+  { value: "CUSTOMERS", label: "Clientes" },
+  { value: "FIADOS", label: "Fiados" },
+  { value: "EMPLOYEES", label: "Funcionários" },
+  { value: "FINANCE", label: "Financeiro" },
+] as const;
 
 const inputClass =
   "w-full rounded-lg border border-slate-200 bg-white px-3.5 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-slate-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10";
@@ -43,14 +42,55 @@ export function EmployeeForm({
   const router = useRouter();
   const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
+  const [selectedModules, setSelectedModules] = useState<string[]>(
+    () => employee?.accesses.map((access) => access.module) ?? [],
+  );
+  const [canManageCashRegister, setCanManageCashRegister] = useState(
+    () =>
+      employee?.accesses.some(
+        (access) => access.module === "POS" && access.canManageCashRegister,
+      ) ?? false,
+  );
 
   const isEditing = Boolean(employee);
+  const hasPosAccess = selectedModules.includes("POS");
+
+  const selectedLabels = useMemo(
+    () =>
+      modules
+        .filter((module) => selectedModules.includes(module.value))
+        .map((module) => module.label),
+    [selectedModules],
+  );
+
+  function toggleModule(moduleValue: string) {
+    const next = selectedModules.includes(moduleValue)
+      ? selectedModules.filter((value) => value !== moduleValue)
+      : [...selectedModules, moduleValue];
+
+    setSelectedModules(next);
+
+    if (!next.includes("POS")) {
+      setCanManageCashRegister(false);
+    }
+  }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const form = event.currentTarget;
     const formData = new FormData(form);
+
+    formData.delete("modules");
+    for (const module of selectedModules) {
+      formData.append("modules", module);
+    }
+
+    if (hasPosAccess && canManageCashRegister) {
+      formData.set("canManageCashRegister", "on");
+    } else {
+      formData.delete("canManageCashRegister");
+    }
 
     setMessage("");
 
@@ -68,6 +108,8 @@ export function EmployeeForm({
         onCancelEdit?.();
       } else {
         form.reset();
+        setSelectedModules([]);
+        setCanManageCashRegister(false);
         setMessage("Funcionário cadastrado com sucesso!");
       }
 
@@ -164,7 +206,7 @@ export function EmployeeForm({
       <div className="border-t border-slate-100" />
 
       <section>
-        <div className="mb-5">
+        <div className="mb-4">
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-sm font-semibold text-slate-800">
               Permissões de acesso
@@ -174,81 +216,77 @@ export function EmployeeForm({
             </span>
           </div>
           <p className="mt-1 text-xs text-slate-500">
-            Selecione os módulos que estarão disponíveis para este funcionário.
+            Selecione os módulos disponíveis para este funcionário.
           </p>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {modules.map((module) => (
-            <label key={module.value} className="group cursor-pointer">
-              <input
-                type="checkbox"
-                name="modules"
-                value={module.value}
-                defaultChecked={employee?.accesses.some(
-                  (access) => access.module === module.value
-                ) ?? false}
-                className="peer sr-only"
-              />
+        <div>
+          <p className="mb-2 text-sm font-medium text-slate-700">Módulos *</p>
 
-              <div className="flex h-full min-h-20 items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-slate-300 hover:bg-slate-50 peer-checked:border-emerald-500 peer-checked:bg-emerald-50/60 peer-checked:ring-1 peer-checked:ring-emerald-500/20">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-lg text-slate-600 transition peer-checked:bg-emerald-100 peer-checked:text-emerald-700 group-has-[:checked]:bg-emerald-100 group-has-[:checked]:text-emerald-700">
-                  {module.icon}
-                </span>
+          <div
+            role="listbox"
+            aria-multiselectable="true"
+            aria-label="Módulos"
+            className="overflow-hidden rounded-lg border border-slate-200 bg-white"
+          >
+            {modules.map((module) => {
+              const selected = selectedModules.includes(module.value);
 
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-semibold text-slate-800">
-                    {module.label}
+              return (
+                <button
+                  key={module.value}
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  onClick={() => toggleModule(module.value)}
+                  className={`flex w-full items-center justify-between gap-3 border-b border-slate-100 px-3.5 py-2.5 text-left text-sm last:border-b-0 transition ${
+                    selected
+                      ? "bg-emerald-50 font-medium text-emerald-800"
+                      : "text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  <span>{module.label}</span>
+                  <span
+                    className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] ${
+                      selected
+                        ? "border-emerald-600 bg-emerald-600 text-white"
+                        : "border-slate-300 text-transparent"
+                    }`}
+                  >
+                    ✓
                   </span>
-                  <span className="mt-1 block text-xs leading-relaxed text-slate-500">
-                    {module.description}
-                  </span>
-                </span>
+                </button>
+              );
+            })}
+          </div>
 
-                <span className="mt-1 flex h-4 w-4 shrink-0 items-center justify-center rounded border border-slate-300 text-[10px] text-transparent peer-checked:border-emerald-600 peer-checked:bg-emerald-600 peer-checked:text-white group-has-[:checked]:border-emerald-600 group-has-[:checked]:bg-emerald-600 group-has-[:checked]:text-white">
-                  ✓
-                </span>
-              </div>
-            </label>
-          ))}
-          <label className="group block cursor-pointer">
-            <input
-              type="checkbox"
-              name="canManageCashRegister"
-              defaultChecked={
-                employee?.accesses.some(
-                  (access) =>
-                    access.module === "POS" &&
-                    access.canManageCashRegister
-                ) ?? false
-              }
-              className="peer sr-only"
-            />
-
-            <div className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 transition hover:border-slate-300 hover:bg-slate-50 peer-checked:border-emerald-500 peer-checked:bg-emerald-50/60 peer-checked:ring-1 peer-checked:ring-emerald-500/20">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-lg text-slate-600 group-has-[:checked]:bg-emerald-100 group-has-[:checked]:text-emerald-700">
-                🔐
-              </span>
-
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-semibold text-slate-800">
-                  Gerenciar caixa
-                </span>
-                <span className="mt-1 block text-xs leading-relaxed text-slate-500">
-                  Permite abrir e fechar o caixa compartilhado da adega.
-                </span>
-              </span>
-
-              <span className="mt-1 flex h-4 w-4 shrink-0 items-center justify-center rounded border border-slate-300 text-[10px] text-transparent peer-checked:border-emerald-600 peer-checked:bg-emerald-600 peer-checked:text-white group-has-[:checked]:border-emerald-600 group-has-[:checked]:bg-emerald-600 group-has-[:checked]:text-white">
-                ✓
-              </span>
-            </div>
-          </label>
+          {selectedLabels.length > 0 && (
+            <p className="mt-2 text-xs text-slate-500">
+              Selecionados: {selectedLabels.join(", ")}
+            </p>
+          )}
         </div>
 
-        <p className="mt-3 text-xs text-slate-400">
-          O funcionário terá acesso somente aos módulos selecionados.
-        </p>
+        {hasPosAccess && (
+          <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-3">
+            <input
+              type="checkbox"
+              checked={canManageCashRegister}
+              onChange={(event) =>
+                setCanManageCashRegister(event.target.checked)
+              }
+              className="mt-0.5 h-4 w-4 rounded border-slate-300 text-emerald-600"
+            />
+            <span>
+              <span className="block text-sm font-medium text-slate-800">
+                Gerenciar caixa
+              </span>
+              <span className="mt-0.5 block text-xs text-slate-500">
+                Permite abrir e fechar o caixa compartilhado da adega.
+              </span>
+            </span>
+          </label>
+        )}
       </section>
 
       {message && (

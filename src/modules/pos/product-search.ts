@@ -13,6 +13,7 @@ export type PosProductListItem = {
   id: string;
   code: string;
   name: string;
+  imageUrl: string | null;
   type: "STANDARD" | "SUPPLY" | "FRACTIONAL" | "COMBO";
   salePrice: string;
   unit: string;
@@ -204,6 +205,7 @@ function formatPosProduct(product: ProductWithRelations): PosProductListItem {
     id: product.id,
     code: product.code,
     name: product.name,
+    imageUrl: product.imageUrl,
     type: product.type as PosProductListItem["type"],
     salePrice: product.salePrice.toString(),
     unit: "UNIT",

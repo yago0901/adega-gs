@@ -44,6 +44,7 @@ type Product = {
   id: string;
   code: string;
   name: string;
+  imageUrl: string | null;
   type: "STANDARD" | "SUPPLY" | "FRACTIONAL" | "COMBO";
   salePrice: string;
   unit: string;
@@ -1849,27 +1850,44 @@ export default function PosClient({
                       onClick={() => addProduct(product)}
                       className="rounded-xl border border-gray-200 bg-white p-4 text-left transition hover:border-blue-400 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <span className="font-semibold text-gray-900">
-                          {product.name}
-                        </span>
+                      <div className="flex items-start gap-3">
+                        {product.imageUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={product.imageUrl}
+                            alt=""
+                            className="h-14 w-14 shrink-0 rounded-lg border border-gray-100 object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-xs font-semibold text-slate-500">
+                            {product.name.slice(0, 2).toUpperCase()}
+                          </div>
+                        )}
 
-                        <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">
-                          {getTypeLabel(product.type)}
-                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-2">
+                            <span className="font-semibold text-gray-900">
+                              {product.name}
+                            </span>
+
+                            <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-600">
+                              {getTypeLabel(product.type)}
+                            </span>
+                          </div>
+
+                          <span className="mt-1 block text-xs text-gray-500">
+                            Código: {product.code}
+                          </span>
+
+                          <span className="mt-2 block text-lg font-bold text-gray-900">
+                            {currency.format(Number(product.salePrice))}
+                          </span>
+
+                          <span className="mt-1 block text-xs text-gray-500">
+                            Disponível: {stock} un.
+                          </span>
+                        </div>
                       </div>
-
-                      <span className="mt-1 block text-xs text-gray-500">
-                        Código: {product.code}
-                      </span>
-
-                      <span className="mt-3 block text-lg font-bold text-gray-900">
-                        {currency.format(Number(product.salePrice))}
-                      </span>
-
-                      <span className="mt-1 block text-xs text-gray-500">
-                        Disponível: {stock} un.
-                      </span>
                     </button>
                   );
                 })}

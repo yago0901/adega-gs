@@ -20,6 +20,7 @@ import {
   getProductFormDataAction,
   saveProduct,
 } from "./actions";
+import { ProductImageField } from "./product-image-field";
 
 type NewFormData = Awaited<ReturnType<typeof getProductFormDataAction>>;
 type EditFormData = Exclude<
@@ -208,6 +209,10 @@ export function ProductFormModal({
                     />
                   </label>
 
+                  <div className="sm:col-span-2">
+                    <ProductImageField />
+                  </div>
+
                   <label className="text-sm font-medium sm:col-span-2">
                     Categoria *
                     <select
@@ -325,6 +330,10 @@ export function ProductFormModal({
                         className="mt-2 w-full rounded-lg border border-slate-300 p-3"
                       />
                     </label>
+
+                    <div className="sm:col-span-2">
+                      <ProductImageField initialUrl={product.imageUrl || null} />
+                    </div>
 
                     <label className="text-sm font-medium sm:col-span-2">
                       Categoria *

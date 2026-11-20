@@ -184,6 +184,7 @@ model Product {
   barcode     String?     @unique
   name        String
   description String?
+  imageUrl    String?
   type        ProductType @default(STANDARD)
 
   salePrice Decimal @db.Decimal(12, 2)
@@ -696,4 +697,11 @@ model DeliveryPayment {
   delivery   Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
 
   @@index([deliveryId])
+}
+
+/// Taxas da maquininha / adquirente por forma de pagamento (%).
+model PaymentMethodFee {
+  method     PaymentMethod @id
+  percentFee Decimal       @default(0) @db.Decimal(5, 2)
+  updatedAt  DateTime      @updatedAt
 }

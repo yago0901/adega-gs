@@ -304,6 +304,7 @@ export async function createProduct(formData: FormData, userId: string) {
   const barcode = getText(formData, "barcode") || null;
   const name = getText(formData, "name");
   const description = getText(formData, "description") || null;
+  const imageUrl = getText(formData, "imageUrl") || null;
   const categoryId = getText(formData, "categoryId");
 
   const type = getText(formData, "type");
@@ -419,6 +420,7 @@ export async function createProduct(formData: FormData, userId: string) {
             barcode,
             name,
             description,
+            imageUrl,
             type: "FRACTIONAL",
             salePrice,
             categoryId,
@@ -472,6 +474,7 @@ export async function createProduct(formData: FormData, userId: string) {
             barcode,
             name,
             description,
+            imageUrl,
             type: "COMBO",
             salePrice,
             categoryId,
@@ -730,6 +733,7 @@ export async function createProduct(formData: FormData, userId: string) {
         barcode,
         name,
         description,
+        imageUrl,
         type,
         salePrice,
         categoryId,
@@ -816,6 +820,7 @@ export async function updateProduct(
   const barcode = getText(formData, "barcode") || null;
   const name = getText(formData, "name");
   const description = getText(formData, "description") || null;
+  const imageUrl = getText(formData, "imageUrl") || null;
   const categoryId = getText(formData, "categoryId");
   const type = getText(formData, "type");
 
@@ -1343,6 +1348,7 @@ export async function updateProduct(
         barcode,
         name,
         description,
+        imageUrl,
         salePrice,
         categoryId,
       },
